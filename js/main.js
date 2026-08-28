@@ -20,11 +20,19 @@
 //
 // M4: a fleet of AI tanks (TankAI) hunts the player and each other — nearest-
 // enemy targeting, lead pursuit, slope-aware steering, a battle-area leash,
-// MG sprays and rare arced shells. Destroyed AI tanks explode (smoke + boom)
-// and respawn 3 s later at a new point; the ENEMIES control (0-16) grows and
+// MG sprays and rare arced shells. The ENEMIES control (0-16) grows and
 // shrinks the fleet live. Kill attribution feeds the message feed and the
 // scoreboard (per-AI tallies keyed by the Tank object, which persists across
 // respawns).
+//
+// M5: the full combat loop. Destroyed tanks break into tumbling debris (a
+// pooled burst) and respawn (AI) or end the run (player: the DESTROYED
+// overlay shows the reason, distance, kills, score and the scoreboard). The
+// garage base zone (flat pad + concrete decal at the spawn point) repairs
+// the player over time. Tanks block on trees/rocks (small chip damage on a
+// hard impact) and damage each other on body collision (speed-based, both
+// take a hit, push apart). Score = damage dealt + 500 per kill; the best
+// score persists across sessions.
 // ---------------------------------------------------------------------------
 
 const Game = (() => {
@@ -80,6 +88,23 @@ const Game = (() => {
     0x7a2f4f: "Maroon Marauder",
     0x9a7a4a: "Sand Scorpion",
   };
+
+  // --- Garage base (M5) ------------------------------------------------------
+  const BASE_HALF = 20; // m; the pad is 40 x 40 centered on the spawn point
+  const BASE_REPAIR_RATE = 20; // HP/s while the player tank is inside (player only)
+  // The ground is flattened over a region this much larger than the pad, one
+  // full terrain cell beyond each edge (== TERRAIN_CELL). The coarse mesh grid
+  // then has no vertex inside the blend ramp under the decal, so no z-fighting.
+  const FLAT_MARGIN = 18.75;
+
+  // --- Collisions (M5) ---------------------------------------------------------
+  const TANK_RAM_RANGE = 5; // m horizontal between two tanks => collision
+  const TANK_RAM_SPEED_MIN = 5; // m/s relative speed; faster deals damage
+  const TANK_RAM_DMG_PER = 2; // HP per (m/s above the min), to both tanks
+  const TANK_RAM_COOLDOWN = 1; // s per pair before damage may apply again
+  const OBSTACLE_SPEED_MIN = 3; // m/s impact speed; faster chips HP
+  const OBSTACLE_DMG = 2; // HP chipped on a hard impact with a tree/rock
+  const OBSTACLE_COOLDOWN = 0.5; // s per obstacle before damage may apply again
 
   // --- Title-screen camera ---------------------------------------------------
   const ORBIT_RADIUS = 60; // m from the map center
@@ -298,6 +323,11 @@ const Game = (() => {
   // Where the action is: the spawn point while ready, the player tank once playing.
   const focus = new THREE.Vector3();
 
+  // --- Garage base (M5) --------------------------------------------------------
+  // The repair pad: a flat 40 x 40 m rectangle centered on the spawn point.
+  const BASE = { x0: -BASE_HALF, x1: BASE_HALF, z0: -BASE_HALF, z1: BASE_HALF, y: 0 };
+  let inGarage = false; // the player tank is inside the pad (hint + repair)
+
   // Player tank + chase camera + controller (M2). `ctx` is extended in M4.
   let tank = null;
   let chaseCam = null;
@@ -307,6 +337,7 @@ const Game = (() => {
   // --- Combat (M3) -----------------------------------------------------------
   let tracers = null;
   let shells = null;
+  let debris = null; // M5: pooled tank-shaped wreck pieces
   let flashes = null;
   const smokes = [];
   let mgCooldown = 0; // s until the next MG shot may fire
@@ -328,16 +359,45 @@ const Game = (() => {
   const _barrel = new THREE.Vector3();
   const _aimPt = new THREE.Vector3();
   const _smokePt = new THREE.Vector3();
+  const _prevPos = new THREE.Vector3(); // position before a tank's movement step (M5)
+  const _obHits = []; // scenery items overlapping a tank (M5, reused per call)
 
-  /** Build the world ONCE: terrain, trees, rocks, clouds, and the player tank. */
+  /** Build the world ONCE: terrain, the garage pad, trees, rocks, clouds,
+   *  and the player tank. */
   function buildWorld() {
     // Hardcode a seed here to reproduce the identical map (e.g. `12345`).
     const seed = randomSeed();
     terrain = new Terrain(seed, scene);
+    // Garage base (M5): flatten the pad to the average ground height
+    // underneath it, then rebuild the mesh (the constructor's initial build
+    // predates the flat zone).
+    let sum = 0;
+    const SAMPLES = 7;
+    for (let i = 0; i < SAMPLES; i++)
+      for (let j = 0; j < SAMPLES; j++) {
+        const x = lerp(BASE.x0, BASE.x1, i / (SAMPLES - 1));
+        const z = lerp(BASE.z0, BASE.z1, j / (SAMPLES - 1));
+        sum += terrain.heightAt(x, z);
+      }
+    BASE.y = sum / (SAMPLES * SAMPLES);
+    // Flatten a region FLAT_MARGIN larger than the pad (see FLAT_MARGIN);
+    // the repair BASE rectangle and the decal stay exactly the pad size.
+    terrain.flatZones.push({
+      x0: BASE.x0 - FLAT_MARGIN, x1: BASE.x1 + FLAT_MARGIN,
+      z0: BASE.z0 - FLAT_MARGIN, z1: BASE.z1 + FLAT_MARGIN,
+      y: BASE.y,
+    });
+    terrain.rebuild();
     scenery = new Scenery(scene);
+    scenery.add({ mesh: makeBaseDecal(BASE.y) });
     clouds = new Clouds(scenery, 36);
-    new Trees(scenery, terrain, seed, null);
-    new Rocks(scenery, terrain, seed, null);
+    // Keep trees/rocks off the garage pad (25 m margin beyond the pad edges).
+    const keepOut = {
+      x0: BASE.x0 - 25, x1: BASE.x1 + 25,
+      z0: BASE.z0 - 25, z1: BASE.z1 + 25,
+    };
+    new Trees(scenery, terrain, seed, keepOut);
+    new Rocks(scenery, terrain, seed, keepOut);
     focus.set(0, terrain.heightAt(0, 0), 0);
 
     tank = new Tank(scene, { livery: 0x8a8f94 });
@@ -348,28 +408,87 @@ const Game = (() => {
     ctx = { player: tank, tanks: [tank], terrain };
     tracers = new Tracers(scene);
     shells = new Shells(scene);
+    debris = new Debris(scene);
     flashes = new MuzzleFlashes(scene);
     // Both weapons share the same kill/damage attribution (M4: the AI fleet
     // feeds the same tallies; the player's shots never hit the player).
     tracers.onKill = shells.onKill = (owner, victim) => {
-      if (victim === tank) return; // death itself is handled via !tank.alive below
+      if (victim === tank) {
+        destroyReason = "You were shot down by " + owner.callsign + ".";
+        return; // death itself is handled via !tank.alive below
+      }
       const slot = fleet.find((s) => s.tank === victim);
       if (slot) destroyAiTank(slot, owner);
     };
-    tracers.onDamage = shells.onDamage = (owner, victim, dealt) => {
-      if (owner === tank) {
-        damageDealt += dealt;
-      } else {
-        shooterStatsFor(owner).damage += dealt;
-      }
-      // Small camera shake when the player is hit.
-      if (victim === tank && chaseCam) {
-        chaseCam.shake = Math.max(chaseCam.shake, CAM_SHAKE_HIT * dealt);
-      }
-    };
+    tracers.onDamage = shells.onDamage = recordDamage;
     spawnPlayerTank();
     // Apply the persisted enemy count (the player tank must exist first).
     setCpuCount(cpuCount);
+  }
+
+  /** Concrete pad with a yellow hazard border and painted "GARAGE" text,
+   *  painted on a flat canvas and laid on the (flattened) base zone. */
+  function makeBaseDecal(y) {
+    const S = 256; // canvas px across the pad (40 m)
+    const c = document.createElement("canvas");
+    c.width = c.height = S;
+    const g = c.getContext("2d");
+    const PXM = S / (BASE_HALF * 2); // px per meter
+    g.fillStyle = "#5a5c60"; // concrete
+    g.fillRect(0, 0, S, S);
+    // Subtle mottling.
+    for (let i = 0; i < 260; i++) {
+      g.fillStyle = "rgba(255,255,255," + (0.015 + Math.random() * 0.03) + ")";
+      g.fillRect(Math.random() * S, Math.random() * S, 2 + Math.random() * 6, 1 + Math.random() * 3);
+    }
+    // Yellow hazard border band around the pad edge.
+    const BW = 2.5 * PXM; // border width (2.5 m)
+    g.fillStyle = "#d8b32a";
+    g.fillRect(0, 0, S, BW);
+    g.fillRect(0, S - BW, S, BW);
+    g.fillRect(0, 0, BW, S);
+    g.fillRect(S - BW, 0, BW, S);
+    // Diagonal black hazard stripes over the border band only.
+    g.save();
+    g.beginPath();
+    g.rect(0, 0, S, BW);
+    g.rect(0, S - BW, S, BW);
+    g.rect(0, 0, BW, S);
+    g.rect(S - BW, 0, BW, S);
+    g.clip();
+    g.fillStyle = "#1e1f22";
+    const stripe = 8 * PXM; // stripe period along the edge
+    for (let d = -S; d < S * 2; d += stripe * 2) {
+      g.beginPath();
+      g.moveTo(d, 0);
+      g.lineTo(d + stripe, 0);
+      g.lineTo(d + stripe - S, S);
+      g.lineTo(d - S, S);
+      g.closePath();
+      g.fill();
+    }
+    g.restore();
+    // Painted "GARAGE" text.
+    g.fillStyle = "#e8e6df";
+    g.font = "700 " + Math.floor(6 * PXM) + "px sans-serif";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText("GARAGE", S / 2, S / 2);
+    const tex = new THREE.CanvasTexture(c);
+    const mat = new THREE.MeshLambertMaterial({ map: tex });
+    // Decal sits 0.05 m above the flattened ground so it wins the depth test
+    // up close; polygonOffset additionally biases its depth toward the camera
+    // so it also wins at range, where the 0.05 m gap is sub-pixel.
+    mat.polygonOffset = true;
+    mat.polygonOffsetFactor = -1;
+    mat.polygonOffsetUnits = -1;
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(BASE_HALF * 2, BASE_HALF * 2).rotateX(-Math.PI / 2),
+      mat
+    );
+    mesh.position.set(0, y + 0.05, 0);
+    mesh.receiveShadow = true;
+    return mesh;
   }
 
   /** Pick a spawn heading that faces the flattest drivable ground. */
@@ -411,6 +530,7 @@ const Game = (() => {
     shooterStats.clear();
     tracers.clear();
     shells.clear();
+    debris.clear();
     flashes.clear();
     clearSmokes();
   }
@@ -481,7 +601,7 @@ const Game = (() => {
     return s;
   }
 
-  /** A CPU tank was destroyed: hide it, boom, start the respawn timer. */
+  /** A CPU tank was destroyed: hide it, debris burst + boom, start respawn. */
   function destroyAiTank(slot, killer) {
     const cp = slot.tank;
     if (slot.respawnTimer > 0) return; // already destroyed, respawn pending
@@ -489,6 +609,7 @@ const Game = (() => {
     cp.hp = 0;
     cp.group.visible = false;
     const dist = cp.position.distanceTo(tank.position);
+    debris.spawn(cp.position, cp.velocity);
     spawnSmoke(cp.position);
     EngineAudio.crash(dist);
     slot.respawnTimer = CPU_RESPAWN_DELAY;
@@ -531,8 +652,9 @@ const Game = (() => {
     }
   }
 
-  /** The player was destroyed: hide the tank, boom, shake, delayed overlay.
-    *  (M5 adds the reason, distance, score and the full scoreboard.) */
+  /** The player was destroyed: hide the tank, debris burst + big smoke +
+   *  boom, shake, delayed overlay with the reason, distance, kills, score
+   *  and the full scoreboard. */
   function destroyPlayer(reason) {
     state = "destroyed";
     destroyReason = reason;
@@ -543,7 +665,11 @@ const Game = (() => {
       saveSettings();
     }
     tank.group.visible = false;
-    spawnSmoke(tank.position);
+    debris.spawn(tank.position, tank.velocity);
+    spawnSmoke(tank.position, {
+      count: 120, size: 3.0, color: 0x3a3a3a, opacity: 0.9, life: 3.5,
+      sx: 2.5, sy: 1.5, sz: 2.5, vh: 6, vyLo: 1.5, vyHi: 7,
+    });
     EngineAudio.crash(0);
     chaseCam.shake = CAM_SHAKE_DESTROYED;
     overlayDelay = OVERLAY_DELAY; // let the impact register before the panel appears
@@ -640,6 +766,124 @@ const Game = (() => {
       opacity: tier.opacity, life: tier.life,
       sx: 0.8, sy: 0.5, sz: 0.8, vh: 1.5, vyLo: 0.5, vyHi: 2.0,
     });
+  }
+
+  // --- Collisions (M5) -------------------------------------------------------
+  /** Credit damage to its shooter (player or AI) for the scoreboard. */
+  function recordDamage(owner, victim, dealt) {
+    if (owner === tank) {
+      damageDealt += dealt;
+    } else {
+      shooterStatsFor(owner).damage += dealt;
+    }
+    // Small camera shake when the player is hit.
+    if (victim === tank && chaseCam) {
+      chaseCam.shake = Math.max(chaseCam.shake, CAM_SHAKE_HIT * dealt);
+    }
+  }
+
+  /** Tank vs obstacle: if the tank's new position overlaps a tree/rock,
+   *  cancel the movement step (the tank stops at the obstacle) and chip a
+   *  little HP on a hard impact (per-obstacle cooldown). */
+  function blockObstacle(t, prev) {
+    const hit = scenery.overlapping(t.position, COLLIDE_RADIUS, _obHits);
+    if (!hit.length) return;
+    const impact = Math.abs(t.speed);
+    t.position.copy(prev); // cancel the step: stop at the obstacle
+    t.speed = 0;
+    t.group.position.copy(t.position);
+    if (impact <= OBSTACLE_SPEED_MIN) return;
+    t._obCd = t._obCd || new Map();
+    let canChip = false;
+    for (const item of hit) {
+      const cd = t._obCd.get(item);
+      if (cd === undefined || cd <= 0) canChip = true;
+      t._obCd.set(item, OBSTACLE_COOLDOWN);
+    }
+    if (!canChip) return;
+    const killed = t.takeDamage(OBSTACLE_DMG);
+    if (killed && t === tank) {
+      destroyReason = "You crashed into a " + (hit[0].kind === "rock" ? "rock" : "tree") + ".";
+    }
+  }
+
+  /** Tank vs tank: for each alive pair within TANK_RAM_RANGE, push the hulls
+   *  apart and (per-pair cooldown) damage both by the excess approach speed. */
+  function collideTanks(tanks) {
+    for (let i = 0; i < tanks.length; i++) {
+      for (let j = i + 1; j < tanks.length; j++) {
+        const a = tanks[i], b = tanks[j];
+        if (!a.alive || !b.alive) continue;
+        const dx = b.position.x - a.position.x;
+        const dz = b.position.z - a.position.z;
+        const d = Math.hypot(dx, dz);
+        if (d >= TANK_RAM_RANGE) continue;
+        // Push apart so the hulls don't overlap.
+        if (d > 1e-3) {
+          const push = (TANK_RAM_RANGE - d) / 2;
+          const nx = dx / d, nz = dz / d;
+          a.position.x -= nx * push;
+          a.position.z -= nz * push;
+          b.position.x += nx * push;
+          b.position.z += nz * push;
+          a.group.position.copy(a.position);
+          b.group.position.copy(b.position);
+        } else {
+          a.position.x -= TANK_RAM_RANGE / 2;
+          b.position.x += TANK_RAM_RANGE / 2;
+          a.group.position.copy(a.position);
+          b.group.position.copy(b.position);
+        }
+        // Speed-based damage to both (per-pair 1 s cooldown).
+        const rel = Math.hypot(
+          a.velocity.x - b.velocity.x,
+          a.velocity.z - b.velocity.z
+        );
+        const dmg = Math.max(0, (rel - TANK_RAM_SPEED_MIN) * TANK_RAM_DMG_PER);
+        if (dmg <= 0) continue;
+        const dealt = Math.round(dmg);
+        a._ramCd = a._ramCd || new Map();
+        b._ramCd = b._ramCd || new Map();
+        const cd = a._ramCd.get(b);
+        if (cd !== undefined && cd > 0) continue;
+        a._ramCd.set(b, TANK_RAM_COOLDOWN);
+        b._ramCd.set(a, TANK_RAM_COOLDOWN);
+        const toA = Math.min(dealt, a.hp);
+        const toB = Math.min(dealt, b.hp);
+        const killedA = a.takeDamage(dealt);
+        const killedB = b.takeDamage(dealt);
+        recordDamage(b, a, toA);
+        recordDamage(a, b, toB);
+        if (killedA && a === tank) destroyReason = "You were rammed.";
+        if (killedB && b === tank) destroyReason = "You were rammed.";
+        if (killedA) {
+          const slot = fleet.find((s) => s.tank === a);
+          if (slot) destroyAiTank(slot, b);
+        }
+        if (killedB) {
+          const slot = fleet.find((s) => s.tank === b);
+          if (slot) destroyAiTank(slot, a);
+        }
+      }
+    }
+  }
+
+  /** Tick the per-obstacle and per-pair collision cooldowns for a tank. */
+  function tickCooldowns(t, dt) {
+    if (t._obCd) {
+      for (const [item, cd] of t._obCd) {
+        const n = cd - dt;
+        if (n <= 0) t._obCd.delete(item);
+        else t._obCd.set(item, n);
+      }
+    }
+    if (t._ramCd) {
+      for (const [other, cd] of t._ramCd) {
+        const n = cd - dt;
+        if (n <= 0) t._ramCd.delete(other);
+        else t._ramCd.set(other, n);
+      }
+    }
   }
 
   // --- Persisted user settings (localStorage) --------------------------------
@@ -976,9 +1220,22 @@ const Game = (() => {
 
       // Player: keyboard + mouse -> control -> physics.
       const control = playerController.update(dt, tank, ctx);
+      _prevPos.copy(tank.position);
       tank.update(dt, control, terrain);
+      blockObstacle(tank, _prevPos);
       emitDamageSmoke(tank, dt);
+      tickCooldowns(tank, dt);
       focus.copy(tank.position);
+
+      // Garage (M5): while the player's center is inside the pad, repair over
+      // time (player only; AI tanks drive through it unchanged).
+      inGarage =
+        tank.alive &&
+        tank.position.x > BASE.x0 && tank.position.x < BASE.x1 &&
+        tank.position.z > BASE.z0 && tank.position.z < BASE.z1;
+      if (inGarage && tank.hp < tank.maxHp) {
+        tank.hp = Math.min(tank.maxHp, tank.hp + BASE_REPAIR_RATE * dt);
+      }
 
       // MG: hold LMB/Space. Sustained fire heats the gun; at GUN_MAX_TEMP it
       // overheates and cannot fire until fully cool.
@@ -1018,8 +1275,11 @@ const Game = (() => {
           continue;
         }
         const ac = slot.ai.update(dt, cp, ctx);
+        _prevPos.copy(cp.position);
         cp.update(dt, ac, terrain);
+        blockObstacle(cp, _prevPos);
         emitDamageSmoke(cp, dt);
+        tickCooldowns(cp, dt);
         if (ac.firing) {
           tracers.fire(cp, cp.muzzleWorld(_muzzle), cp.barrelDir(_barrel), MG_DAMAGE_AI);
           flashes.flash(_muzzle);
@@ -1033,6 +1293,9 @@ const Game = (() => {
           }
         }
       }
+
+      // Tank vs tank: push apart + speed-based damage to both (M5).
+      collideTanks(ctx.tanks);
 
       if (state === "playing") {
         // Tracers: integrate, collide, damage.
@@ -1048,8 +1311,9 @@ const Game = (() => {
           });
         });
 
-        // Player shot down?
-        if (!tank.alive) destroyPlayer("You were destroyed.");
+        // Player destroyed? (the reason was set by the killer: gunfire,
+        // a ram, or an obstacle).
+        if (!tank.alive) destroyPlayer(destroyReason || "You were destroyed.");
       }
 
       if (state === "playing") {
@@ -1112,9 +1376,12 @@ const Game = (() => {
     // Effects + HUD (M3).
     hudCombat.classList.toggle("hidden", state !== "playing");
     updateSmoke(dt);
+    debris.update(dt, terrain);
     flashes.update(dt);
     updateHud();
     updateCrosshair();
+    // Garage hint: visible while the player tank is inside the pad (M5).
+    garageHint.classList.toggle("hidden", !(state === "playing" && inGarage));
 
     // Keep the sky dome centered on the camera; otherwise its far side gets
     // clipped by the far plane once the camera moves farther than
@@ -1138,9 +1405,9 @@ const Game = (() => {
   resize();
   buildCompassTape();
   buildWorld();
-  // M3 wires the crosshair, heat bar, overheat warning and shell status. The
-  // rest of the HUD (HP bar, speed/heading/kills/score rows, compass, control
-  // box, garage hint) stays hidden until M6.
+  // M3 wires the crosshair, heat bar, overheat warning and shell status; M5
+  // wires the garage hint. The rest of the HUD (HP bar, speed/heading/kills/
+  // score rows, compass, control box) stays hidden until M6.
   for (const el of [
     compass,
     hudSpeedRow,
@@ -1149,7 +1416,6 @@ const Game = (() => {
     hudScoreRow,
     hpBar,
     document.querySelector(".hud-box.right"),
-    garageHint,
   ]) {
     el.classList.add("hidden");
   }

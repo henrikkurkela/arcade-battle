@@ -7,8 +7,9 @@
 //
 //   {
 //     mesh:      optional THREE object added to the scene,
+//     kind:      "tree" | "rock"   optional, for messages (M5),
 //     update:    (dt, planePos) => {}   optional per-frame hook,
-//     collidesWith: (pos, radius) => bool   optional; true => crash.
+//     collidesWith: (pos, radius) => bool   optional; true => overlap.
 //   }
 //
 // Future trees/rocks/buildings plug in here:
@@ -103,6 +104,16 @@ class Scenery {
       if (it.collidesWith && it.collidesWith(pos, radius)) return true;
     }
     return false;
+  }
+
+  /** All items whose collision circle overlaps the given position/radius
+   *  (M5: tank blocking). Returns the shared `out` array, emptied first. */
+  overlapping(pos, radius, out) {
+    out.length = 0;
+    for (const it of this.items) {
+      if (it.collidesWith && it.collidesWith(pos, radius)) out.push(it);
+    }
+    return out;
   }
 }
 
@@ -241,6 +252,7 @@ class Trees {
 
       scenery.add({
         mesh: g,
+        kind: "tree",
         collidesWith: (pos, r) =>
           Math.hypot(pos.x - x, pos.z - z) < r + 0.4 * s &&
           pos.y < groundY + treeHeight * s,
@@ -344,6 +356,7 @@ class Rocks {
 
       scenery.add({
         mesh,
+        kind: "rock",
         collidesWith: (pos, r) =>
           Math.hypot(pos.x - x, pos.z - z) < r + s * 1.05 &&
           pos.y < groundY + rockTop,
