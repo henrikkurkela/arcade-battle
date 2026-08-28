@@ -11,6 +11,12 @@
 // chase camera follows from behind the hull, and the pointer-locked mouse
 // aims the turret. "Drive" spawns the tank and locks the pointer; Esc
 // (pointer-lock loss) auto-pauses; R respawns the tank on the same map.
+//
+// M3: the player fires the MG (LMB/Space, heat + overheat) and arcing splash
+// shells (RMB/X, one in the breech, 2.5 s reload), with muzzle flashes,
+// synthesized distance-scaled sound, camera shake, the combat HUD subset
+// (heat bar, shell status, crosshair) and the plane's smoke-burst recipe for
+// shell detonations.
 // ---------------------------------------------------------------------------
 
 const Game = (() => {
@@ -18,6 +24,16 @@ const Game = (() => {
   const CPU_COUNT = 4; // default fleet size (menu allows 0-16)
   const CPU_MAX = 16; // max enemy tanks
   const KILL_SCORE = 500; // score per kill (scoreboard, M5)
+
+  // --- Combat (M3) -----------------------------------------------------------
+  const MG_FIRE_INTERVAL = 0.08; // s between player MG shots
+  const MG_DAMAGE_PLAYER = 6; // damage per player tracer
+  const GUN_HEAT_PER_SHOT = 1; // % heat per shot; 100 shots = overheat
+  const GUN_COOL_RATE = 10; // %/s while not firing
+  const GUN_MAX_TEMP = 100; // overheat: no fire until the gun cools back to 0
+  const SHELL_RELOAD = 2.5; // s to reload the one shell in the breech
+  const CAM_SHAKE_FIRE = 0.02; // camera shake per shell fired
+  const CAM_SHAKE_HIT = 0.04; // camera shake per HP the player takes
 
   // --- Title-screen camera ---------------------------------------------------
   const ORBIT_RADIUS = 60; // m from the map center
@@ -47,6 +63,19 @@ const Game = (() => {
   const sfxMinus = document.getElementById("sfx-minus");
   const sfxPlus = document.getElementById("sfx-plus");
   const timeToggle = document.getElementById("time-toggle");
+  const hudCombat = document.getElementById("hud-combat");
+  const compass = document.getElementById("compass");
+  const hudSpeedRow = document.getElementById("hud-speed-row");
+  const hudHeadingRow = document.getElementById("hud-heading-row");
+  const hudKillsRow = document.getElementById("hud-kills-row");
+  const hudScoreRow = document.getElementById("hud-score-row");
+  const hpBar = document.getElementById("hpbar");
+  const hudShell = document.getElementById("hud-shell");
+  const crosshair = document.getElementById("crosshair");
+  const gunHeat = document.getElementById("gun-heat");
+  const gunHeatFill = document.getElementById("gun-heat-fill");
+  const overheat = document.getElementById("overheat");
+  const garageHint = document.getElementById("garage-hint");
 
   // --- Message feed ----------------------------------------------------------
   const MSG_LIFE_MS = 5000; // matches the msg-fade animation
@@ -60,6 +89,11 @@ const Game = (() => {
     msgFeed.appendChild(el);
     while (msgFeed.children.length > MSG_MAX) msgFeed.firstChild.remove();
     setTimeout(() => el.remove(), MSG_LIFE_MS);
+  }
+
+  /** Display name of a shooter (player or CPU tank) for messages. */
+  function shooterName(owner) {
+    return owner === tank ? "You" : owner.callsign;
   }
 
   // --- Renderer --------------------------------------------------------------
@@ -229,6 +263,23 @@ const Game = (() => {
   let playerController = null;
   let ctx = null;
 
+  // --- Combat (M3) -----------------------------------------------------------
+  let tracers = null;
+  let shells = null;
+  let flashes = null;
+  const smokes = [];
+  let mgCooldown = 0; // s until the next MG shot may fire
+  let gunTemp = 0; // gun temperature, 0..GUN_MAX_TEMP
+  let gunOverheated = false; // latched at GUN_MAX_TEMP until temp cools to 0
+  let gunHeatShown = false; // bar appears at 50% temp, stays visible until temp is 0
+  let overheatWarned = false; // latched while the OVERHEAT warning is showing (beep on appear)
+  let shellReload = 0; // s until the shell is ready again (0 = READY)
+  let kills = 0;
+  let damageDealt = 0; // total HP the player has dealt (score)
+  const _muzzle = new THREE.Vector3();
+  const _barrel = new THREE.Vector3();
+  const _aimPt = new THREE.Vector3();
+
   /** Build the world ONCE: terrain, trees, rocks, clouds, and the player tank. */
   function buildWorld() {
     // Hardcode a seed here to reproduce the identical map (e.g. `12345`).
@@ -246,6 +297,29 @@ const Game = (() => {
     chaseCam = new ChaseCamera(camera);
     playerController = new PlayerController();
     ctx = { player: tank, tanks: [tank], terrain };
+    tracers = new Tracers(scene);
+    shells = new Shells(scene);
+    flashes = new MuzzleFlashes(scene);
+    // Both weapons share the same kill/damage attribution.
+    tracers.onKill = shells.onKill = (owner, victim) => {
+      if (victim === tank) {
+        addMessage(shooterName(owner) + " destroyed you");
+        return;
+      }
+      if (owner === tank) {
+        kills++;
+        addMessage("You destroyed " + victim.callsign);
+      } else {
+        addMessage(owner.callsign + " destroyed " + victim.callsign);
+      }
+    };
+    tracers.onDamage = shells.onDamage = (owner, victim, dealt) => {
+      if (owner === tank) damageDealt += dealt;
+      // Small camera shake when the player is hit.
+      if (victim === tank && chaseCam) {
+        chaseCam.shake = Math.max(chaseCam.shake, CAM_SHAKE_HIT * dealt);
+      }
+    };
     spawnPlayerTank();
   }
 
@@ -268,11 +342,95 @@ const Game = (() => {
     return bestYaw;
   }
 
-  /** Place the player tank at the spawn point and snap the chase camera. */
+  /** Place the player tank at the spawn point and snap the chase camera.
+   *  Also resets the combat state (M3) and clears all in-flight effects. */
   function spawnPlayerTank() {
     tank.reset(0, 0, spawnYaw(), terrain);
     chaseCam.snap(tank);
     focus.copy(tank.position);
+    mgCooldown = 0;
+    gunTemp = 0;
+    gunOverheated = false;
+    gunHeatShown = false;
+    overheatWarned = false;
+    shellReload = 0;
+    kills = 0;
+    damageDealt = 0;
+    tracers.clear();
+    shells.clear();
+    flashes.clear();
+    clearSmokes();
+  }
+
+  // --- Smoke ------------------------------------------------------------------
+  // One burst of `THREE.Points` particles (the plane's spawnSmoke pattern).
+  function spawnSmoke(pos, o = {}) {
+    const N = o.count ?? 90;
+    const sx = o.sx ?? 1.6, sy = o.sy ?? 1.0, sz = o.sz ?? 1.6;
+    const vh = o.vh ?? 4; // horizontal velocity magnitude
+    const vyLo = o.vyLo ?? 1, vyHi = o.vyHi ?? 6; // vertical velocity range
+    const color = o.color ?? 0x5a5a5a;
+    const size = o.size ?? 2.4;
+    const opacity = o.opacity ?? 0.9;
+    const life = o.life ?? 3.0;
+    const positions = new Float32Array(N * 3);
+    const vels = [];
+    for (let i = 0; i < N; i++) {
+      positions[i * 3] = pos.x + (Math.random() - 0.5) * sx;
+      positions[i * 3 + 1] = pos.y + (Math.random() - 0.5) * sy;
+      positions[i * 3 + 2] = pos.z + (Math.random() - 0.5) * sz;
+      vels.push(
+        new THREE.Vector3(
+          (Math.random() - 0.5) * vh,
+          vyLo + Math.random() * (vyHi - vyLo),
+          (Math.random() - 0.5) * vh
+        )
+      );
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({
+      color,
+      size,
+      transparent: true,
+      opacity,
+      depthWrite: false,
+    });
+    const points = new THREE.Points(geo, mat);
+    scene.add(points);
+    smokes.push({ points, vels, life, maxLife: life, maxOpacity: opacity });
+  }
+
+  function updateSmoke(dt) {
+    for (let i = smokes.length - 1; i >= 0; i--) {
+      const smoke = smokes[i];
+      smoke.life -= dt;
+      const attr = smoke.points.geometry.attributes.position;
+      for (let j = 0; j < smoke.vels.length; j++) {
+        const v = smoke.vels[j];
+        v.multiplyScalar(Math.max(0, 1 - 0.8 * dt));
+        v.y += 0.5 * dt; // smoke drifts up
+        attr.setXYZ(j, attr.getX(j) + v.x * dt, attr.getY(j) + v.y * dt, attr.getZ(j) + v.z * dt);
+      }
+      attr.needsUpdate = true;
+      smoke.points.material.opacity = clamp(smoke.life / smoke.maxLife, 0, 1) * smoke.maxOpacity;
+      if (smoke.life <= 0) {
+        scene.remove(smoke.points);
+        smoke.points.geometry.dispose();
+        smoke.points.material.dispose();
+        smokes.splice(i, 1);
+      }
+    }
+  }
+
+  /** Remove every smoke burst (used on restart). */
+  function clearSmokes() {
+    for (const s of smokes) {
+      scene.remove(s.points);
+      s.points.geometry.dispose();
+      s.points.material.dispose();
+    }
+    smokes.length = 0;
   }
 
   // --- Persisted user settings (localStorage) --------------------------------
@@ -542,6 +700,49 @@ const Game = (() => {
     compassTape.appendChild(frag);
   }
 
+  /** M3 HUD: shell status, MG heat bar, OVERHEAT warning. (M6 adds the rest.) */
+  function updateHud() {
+    if (state !== "playing") return;
+    // Shell status: READY, or the reload countdown (red while reloading).
+    if (shellReload > 0) {
+      hudShell.textContent = shellReload.toFixed(1) + "s";
+      hudShell.classList.add("empty");
+    } else {
+      hudShell.textContent = "READY";
+      hudShell.classList.remove("empty");
+    }
+    // MG heat bar: appears at 50% temp, stays visible until fully cool;
+    // red while the gun is locked out.
+    if (gunTemp >= 50) gunHeatShown = true;
+    else if (gunTemp <= 0) gunHeatShown = false;
+    gunHeat.classList.toggle("hidden", !gunHeatShown);
+    const heatPct = (gunTemp / GUN_MAX_TEMP) * 100;
+    gunHeatFill.style.width = heatPct + "%";
+    gunHeatFill.style.background = gunOverheated ? "#f44336" : heatPct > 75 ? "#ff5722" : "#ffb300";
+    // OVERHEAT warning: a beep the moment it appears.
+    const overheating = gunOverheated;
+    overheat.classList.toggle("hidden", !overheating);
+    if (overheating && !overheatWarned) EngineAudio.warnBeep();
+    overheatWarned = overheating;
+  }
+
+  /** Project the barrel direction (the true line of fire) onto the screen. */
+  function updateCrosshair() {
+    if (state !== "playing") {
+      crosshair.classList.add("hidden");
+      return;
+    }
+    _aimPt.copy(tank.position).addScaledVector(tank.barrelDir(_barrel), 1000).project(camera);
+    if (_aimPt.z > 1) {
+      crosshair.classList.add("hidden");
+      return;
+    }
+    crosshair.classList.remove("hidden");
+    const x = ((_aimPt.x + 1) / 2) * canvas.clientWidth;
+    const y = ((1 - _aimPt.y) / 2) * canvas.clientHeight;
+    crosshair.style.transform = "translate3d(" + x + "px," + y + "px,0)";
+  }
+
   // --- Main loop ---------------------------------------------------------------
   let last = performance.now();
 
@@ -554,6 +755,49 @@ const Game = (() => {
       const control = playerController.update(dt, tank, ctx);
       tank.update(dt, control, terrain);
       focus.copy(tank.position);
+
+      // MG: hold LMB/Space. Sustained fire heats the gun; at GUN_MAX_TEMP it
+      // overheats and cannot fire until fully cool.
+      mgCooldown -= dt;
+      if (control.firing && mgCooldown <= 0 && !gunOverheated) {
+        mgCooldown = MG_FIRE_INTERVAL;
+        gunTemp = Math.min(GUN_MAX_TEMP, gunTemp + GUN_HEAT_PER_SHOT);
+        if (gunTemp >= GUN_MAX_TEMP) gunOverheated = true;
+        tracers.fire(tank, tank.muzzleWorld(_muzzle), tank.barrelDir(_barrel), MG_DAMAGE_PLAYER);
+        flashes.flash(_muzzle);
+        EngineAudio.mgFire(0);
+      }
+      if (!control.firing || gunOverheated) {
+        gunTemp = Math.max(0, gunTemp - GUN_COOL_RATE * dt);
+        if (gunOverheated && gunTemp <= 0) gunOverheated = false;
+      }
+
+      // Main gun: hold RMB/X. One shell in the breech; it reloads over
+      // SHELL_RELOAD, so holding the button fires again once it is ready.
+      shellReload = Math.max(0, shellReload - dt);
+      if (control.shellFiring && shellReload <= 0) {
+        if (shells.fire(tank, tank.muzzleWorld(_muzzle), tank.barrelDir(_barrel))) {
+          shellReload = SHELL_RELOAD;
+          flashes.flash(_muzzle);
+          EngineAudio.shellLaunch(0);
+          chaseCam.shake = Math.max(chaseCam.shake, CAM_SHAKE_FIRE);
+          addMessage("Shell away!");
+        }
+      }
+
+      // Tracers: integrate, collide, damage.
+      tracers.update(dt, ctx.tanks, terrain);
+
+      // Shells: integrate (arc), detonate (splash), boom + blast effect.
+      shells.update(dt, ctx.tanks, terrain, (pos) => {
+        EngineAudio.shellBoom(pos.distanceTo(tank.position));
+        flashes.flash(pos);
+        spawnSmoke(pos, {
+          count: 26, size: 2.6, color: 0x3a3a3a, opacity: 0.85, life: 1.4,
+          sx: 2.5, sy: 1.5, sz: 2.5, vh: 9, vyLo: 1, vyHi: 5,
+        });
+      });
+
       chaseCam.update(dt, tank);
       terrain.update(focus);
       scenery.update(dt, focus);
@@ -584,6 +828,13 @@ const Game = (() => {
     EngineAudio.update(dt, tank, state);
     Music.update(dt, state);
 
+    // Effects + HUD (M3).
+    hudCombat.classList.toggle("hidden", state !== "playing");
+    updateSmoke(dt);
+    flashes.update(dt);
+    updateHud();
+    updateCrosshair();
+
     // Keep the sky dome centered on the camera; otherwise its far side gets
     // clipped by the far plane once the camera moves farther than
     // (far - radius) from the origin, showing the black clear color.
@@ -606,6 +857,21 @@ const Game = (() => {
   resize();
   buildCompassTape();
   buildWorld();
+  // M3 wires the crosshair, heat bar, overheat warning and shell status. The
+  // rest of the HUD (HP bar, speed/heading/kills/score rows, compass, control
+  // box, garage hint) stays hidden until M6.
+  for (const el of [
+    compass,
+    hudSpeedRow,
+    hudHeadingRow,
+    hudKillsRow,
+    hudScoreRow,
+    hpBar,
+    document.querySelector(".hud-box.right"),
+    garageHint,
+  ]) {
+    el.classList.add("hidden");
+  }
   timeToggle.textContent = nightMode ? "NIGHT" : "DAY";
   applyEnvironment(nightMix);
   showOverlay(

@@ -10,17 +10,18 @@
     <div id="game-wrap">
       <canvas id="game"></canvas>
 
-      <!-- Heads-up display. The combat elements stay hidden until M6 wires
-           them; the message feed and muted badge work from the start. -->
+      <!-- Heads-up display. M3 wires the crosshair, heat bar, overheat
+            warning and shell status; the rest stays hidden until M6. The
+            message feed and muted badge work from the start. -->
       <div id="hud">
         <div id="hud-combat" class="hidden">
           <div id="compass"><div id="compass-tape"></div><div class="compass-caret"></div></div>
           <div class="hud-box">
             <div id="hpbar"><div id="hpfill"></div><span id="hplabel">HP</span></div>
-            <div class="hud-row">SPEED <span class="v" id="hud-speed">0</span> km/h</div>
-            <div class="hud-row">HEADING <span class="v" id="hud-heading">0&deg;</span></div>
-            <div class="hud-row">KILLS <span class="v" id="hud-kills">0</span></div>
-            <div class="hud-row">SCORE <span class="v" id="hud-score">0</span></div>
+            <div class="hud-row" id="hud-speed-row">SPEED <span class="v" id="hud-speed">0</span> km/h</div>
+            <div class="hud-row" id="hud-heading-row">HEADING <span class="v" id="hud-heading">0&deg;</span></div>
+            <div class="hud-row" id="hud-kills-row">KILLS <span class="v" id="hud-kills">0</span></div>
+            <div class="hud-row" id="hud-score-row">SCORE <span class="v" id="hud-score">0</span></div>
             <div class="hud-row">SHELL <span class="v" id="hud-shell">READY</span></div>
           </div>
           <div class="hud-box right">
@@ -93,6 +94,7 @@
     <script src="js/scenery.js"></script>
     <script src="js/tank.js"></script>
     <script src="js/camera.js"></script>
+    <script src="js/combat.js"></script>
     <script src="js/muzzle.js"></script>
     <script src="js/ai.js"></script>
     <script src="js/main.js"></script>

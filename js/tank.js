@@ -88,6 +88,16 @@ class Tank {
     return this.muzzleObj.getWorldPosition(out);
   }
 
+  /** World-space barrel direction (write into `out` to avoid allocation).
+   *  Hull yaw + turret yaw, pitched by the turret elevation. */
+  barrelDir(out) {
+    const a = this.yaw + this.turretYaw;
+    const p = this.turretPitch;
+    const cp = Math.cos(p);
+    out.set(-cp * Math.sin(a), Math.sin(p), -cp * Math.cos(a));
+    return out;
+  }
+
   /** Apply damage. Returns true if this call destroyed the tank. */
   takeDamage(amount) {
     if (!this.alive) return false;
