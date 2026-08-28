@@ -171,7 +171,10 @@ class Tank {
     const br = terrain.heightAt(px - rx * CORNER_X - fx * CORNER_Z, pz - rz * CORNER_X - fz * CORNER_Z);
     this.position.y = (fl + fr + bl + br) / 4 + TRACK_H;
     const targetPitch = Math.atan2((fl + fr) / 2 - (bl + br) / 2, 2 * CORNER_Z);
-    const targetRoll = Math.atan2((fr + br) / 2 - (fl + bl) / 2, 2 * CORNER_X);
+    // Roll: the +right corners (fl, bl) are the tank's RIGHT side and the
+    // -right corners (fr, br) its LEFT side. A positive rotation.z lifts the
+    // +X (right) side, so the left side rising must yield a negative roll.
+    const targetRoll = Math.atan2((fl + bl) / 2 - (fr + br) / 2, 2 * CORNER_X);
     this.hullPitch = easeToward(this.hullPitch, targetPitch, HULL_EASE, dt);
     this.hullRoll = easeToward(this.hullRoll, targetRoll, HULL_EASE, dt);
 
