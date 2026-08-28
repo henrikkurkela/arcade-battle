@@ -1,0 +1,579 @@
+"use strict";
+
+// ---------------------------------------------------------------------------
+// Game bootstrap, state machine, main loop, HUD and overlays.
+//
+// States: ready -> playing <-> paused; playing -> destroyed -> (restart)
+// The terrain is generated ONCE per session and kept for every run; a
+// restart (M5) spawns a fresh tank on the SAME map.
+//
+// M1: no tank yet. The title screen floats over the live, seeded world
+// (terrain + trees + rocks + clouds) with an orbiting camera; "Drive" drops
+// the camera onto the chase position over the spawn point.
+// ---------------------------------------------------------------------------
+
+const Game = (() => {
+  // --- Menu / fleet constants ------------------------------------------------
+  const CPU_COUNT = 4; // default fleet size (menu allows 0-16)
+  const CPU_MAX = 16; // max enemy tanks
+  const KILL_SCORE = 500; // score per kill (scoreboard, M5)
+
+  // --- Title-screen camera ---------------------------------------------------
+  const ORBIT_RADIUS = 60; // m from the map center
+  const ORBIT_HEIGHT = 30; // m above the ground at the map center
+  const ORBIT_RATE = 0.05; // rad/s
+  // "Playing" (no tank yet) snaps the camera to the chase position over the
+  // spawn point, facing the direction the tank will spawn (north, -Z).
+  const CHASE_BACK = 12; // m behind the spawn point
+  const CHASE_UP = 4.5; // m
+  const CHASE_AHEAD = 6; // m ahead of the spawn point
+
+  // --- DOM -------------------------------------------------------------------
+  const canvas = document.getElementById("game");
+  const compassTape = document.getElementById("compass-tape");
+  const msgFeed = document.getElementById("msg-feed");
+  const mutedBadge = document.getElementById("muted");
+  const overlay = document.getElementById("overlay");
+  const overlayTitle = document.getElementById("overlay-title");
+  const overlayText = document.getElementById("overlay-text");
+  const overlayBtn = document.getElementById("overlay-btn");
+  const scoreboard = document.getElementById("scoreboard");
+  const scoreboardBody = document.getElementById("scoreboard-body");
+  const cpuControl = document.getElementById("cpu-control");
+  const cpuLabel = document.getElementById("cpu-label");
+  const cpuCountEl = document.getElementById("cpu-count");
+  const cpuMinus = document.getElementById("cpu-minus");
+  const cpuPlus = document.getElementById("cpu-plus");
+  const musicCountEl = document.getElementById("music-count");
+  const musicMinus = document.getElementById("music-minus");
+  const musicPlus = document.getElementById("music-plus");
+  const sfxCountEl = document.getElementById("sfx-count");
+  const sfxMinus = document.getElementById("sfx-minus");
+  const sfxPlus = document.getElementById("sfx-plus");
+  const timeToggle = document.getElementById("time-toggle");
+
+  // --- Message feed ----------------------------------------------------------
+  const MSG_LIFE_MS = 5000; // matches the msg-fade animation
+  const MSG_MAX = 6;
+
+  /** Post a message to the feed (bottom-left); it fades out on its own. */
+  function addMessage(text) {
+    const el = document.createElement("div");
+    el.className = "msg";
+    el.textContent = text;
+    msgFeed.appendChild(el);
+    while (msgFeed.children.length > MSG_MAX) msgFeed.firstChild.remove();
+    setTimeout(() => el.remove(), MSG_LIFE_MS);
+  }
+
+  // --- Renderer --------------------------------------------------------------
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  } catch (err) {
+    overlayTitle.textContent = "WEBGL UNAVAILABLE";
+    overlayText.textContent = "This game needs WebGL, which is not available in this browser.";
+    overlayBtn.style.display = "none";
+    return {};
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  // --- Scene -----------------------------------------------------------------
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0xc9dff5, 450, 2300);
+
+  const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 6000);
+
+  // Sky dome (gradient shader, unaffected by fog). Stars are procedural: a
+  // 3D grid over the direction sphere, a random subset of cells holds one
+  // small dot. uStars fades them in for night mode (0 = day, 1 = night).
+  const sky = new THREE.Mesh(
+    new THREE.SphereGeometry(4200, 32, 15),
+    new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      fog: false,
+      uniforms: {
+        top: { value: new THREE.Color(0x2f74c9) },
+        bottom: { value: new THREE.Color(0xc9dff5) },
+        uStars: { value: 0 },
+      },
+      vertexShader: `
+        varying vec3 vDir;
+        void main() {
+          vDir = normalize(position);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }`,
+      fragmentShader: `
+        varying vec3 vDir;
+        uniform vec3 top;
+        uniform vec3 bottom;
+        uniform float uStars;
+        float hash13(vec3 p) {
+          p = fract(p * 0.1031);
+          p += dot(p, p.zyx + 31.32);
+          return fract((p.x + p.y) * p.z);
+        }
+        void main() {
+          float h = clamp(vDir.y, 0.0, 1.0);
+          vec3 col = mix(bottom, top, pow(h, 0.55));
+          if (uStars > 0.001 && vDir.y > 0.02) {
+            float grid = 100.0;
+            vec3 id = floor(vDir * grid);
+            float rnd = hash13(id);
+            if (rnd > 0.96) {
+              vec3 jit = vec3(hash13(id + 17.3), hash13(id + 29.7), hash13(id + 41.1)) - 0.5;
+              vec3 starDir = normalize((id + 0.5 + jit * 0.8) / grid);
+              float d = distance(vDir, starDir);
+              float size = 0.0012 + 0.0018 * hash13(id + 53.9);
+              float bright = 0.35 + 0.65 * hash13(id + 67.7);
+              col += vec3(0.85, 0.9, 1.0) * smoothstep(size, 0.0, d) * bright
+                   * uStars * smoothstep(0.0, 0.12, vDir.y);
+            }
+          }
+          gl_FragColor = vec4(col, 1.0);
+        }`,
+    })
+  );
+  scene.add(sky);
+
+  // Lights.
+  const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x6b5f4a, 0.75);
+  scene.add(hemi);
+  const sun = new THREE.DirectionalLight(0xfff2dc, 1.15);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -140;
+  sun.shadow.camera.right = 140;
+  sun.shadow.camera.top = 140;
+  sun.shadow.camera.bottom = -140;
+  sun.shadow.camera.near = 20;
+  sun.shadow.camera.far = 700;
+  sun.shadow.bias = -0.0004;
+  scene.add(sun);
+  scene.add(sun.target);
+  const _sunOffset = new THREE.Vector3(120, 170, -90);
+
+  // --- Day / night -----------------------------------------------------------
+  // Two palettes; nightMix (0 = day, 1 = night) eases toward the selected
+  // mode and the environment (sky, fog, lights, edge fade, clouds, stars) is
+  // re-blended each frame while the transition is in flight.
+  const ENV_DAY = {
+    skyTop: new THREE.Color(0x2f74c9),
+    horizon: new THREE.Color(0xc9dff5), // fog + sky horizon + edge-fade color
+    fogNear: 450,
+    fogFar: 2300,
+    hemiSky: new THREE.Color(0xcfe8ff),
+    hemiGround: new THREE.Color(0x6b5f4a),
+    hemiIntensity: 0.75,
+    sunColor: new THREE.Color(0xfff2dc),
+    sunIntensity: 1.15,
+    stars: 0,
+    cloudTint: new THREE.Color(0xffffff),
+  };
+  const ENV_NIGHT = {
+    skyTop: new THREE.Color(0x0a1026),
+    horizon: new THREE.Color(0x131a2c),
+    fogNear: 300,
+    fogFar: 1500,
+    hemiSky: new THREE.Color(0x22304a),
+    hemiGround: new THREE.Color(0x0e1013),
+    hemiIntensity: 0.3,
+    sunColor: new THREE.Color(0x9db4d6), // moonlight
+    sunIntensity: 0.25,
+    stars: 1,
+    cloudTint: new THREE.Color(0x59637a),
+  };
+  let nightMode = false; // initialized from saved settings below
+  let nightMix = 0;
+  let clouds = null;
+  const _envTop = new THREE.Color();
+  const _envHorizon = new THREE.Color();
+  const _envHemiSky = new THREE.Color();
+  const _envHemiGround = new THREE.Color();
+  const _envSun = new THREE.Color();
+  const _envCloud = new THREE.Color();
+
+  /** Blend the whole environment between the two palettes at mix t (0..1). */
+  function applyEnvironment(t) {
+    sky.material.uniforms.top.value.copy(_envTop.copy(ENV_DAY.skyTop).lerp(ENV_NIGHT.skyTop, t));
+    sky.material.uniforms.bottom.value.copy(_envHorizon.copy(ENV_DAY.horizon).lerp(ENV_NIGHT.horizon, t));
+    sky.material.uniforms.uStars.value = lerp(ENV_DAY.stars, ENV_NIGHT.stars, t);
+    scene.fog.color.copy(_envHorizon);
+    scene.fog.near = lerp(ENV_DAY.fogNear, ENV_NIGHT.fogNear, t);
+    scene.fog.far = lerp(ENV_DAY.fogFar, ENV_NIGHT.fogFar, t);
+    hemi.color.copy(_envHemiSky.copy(ENV_DAY.hemiSky).lerp(ENV_NIGHT.hemiSky, t));
+    hemi.groundColor.copy(_envHemiGround.copy(ENV_DAY.hemiGround).lerp(ENV_NIGHT.hemiGround, t));
+    hemi.intensity = lerp(ENV_DAY.hemiIntensity, ENV_NIGHT.hemiIntensity, t);
+    sun.color.copy(_envSun.copy(ENV_DAY.sunColor).lerp(ENV_NIGHT.sunColor, t));
+    sun.intensity = lerp(ENV_DAY.sunIntensity, ENV_NIGHT.sunIntensity, t);
+    EDGE_FADE.color.copy(_envHorizon);
+    if (terrain) terrain.fadeColor.copy(_envHorizon);
+    if (clouds) clouds.tint(_envCloud.copy(ENV_DAY.cloudTint).lerp(ENV_NIGHT.cloudTint, t));
+  }
+
+  /** Toggle day/night from the menu. The environment eases over ~1 s. */
+  function setNightMode(on) {
+    nightMode = !!on;
+    timeToggle.textContent = nightMode ? "NIGHT" : "DAY";
+    saveSettings();
+  }
+
+  // --- World -----------------------------------------------------------------
+  let terrain = null;
+  let scenery = null;
+  // Where the action is: the spawn point in M1 (the player tank from M2 on).
+  const focus = new THREE.Vector3();
+
+  /** Build the world ONCE: terrain, trees, rocks, clouds. */
+  function buildWorld() {
+    // Hardcode a seed here to reproduce the identical map (e.g. `12345`).
+    const seed = randomSeed();
+    terrain = new Terrain(seed, scene);
+    scenery = new Scenery(scene);
+    clouds = new Clouds(scenery, 36);
+    new Trees(scenery, terrain, seed, null);
+    new Rocks(scenery, terrain, seed, null);
+    focus.set(0, terrain.heightAt(0, 0), 0);
+  }
+
+  // --- Persisted user settings (localStorage) --------------------------------
+  // Enemy count, volumes, mute, night and best score survive a page reload.
+  // Storage may be unavailable (private mode, file://, quota) — every access
+  // is guarded so the game still runs, just without persistence.
+  const SETTINGS_KEY = "arcadeTank.settings";
+  const savedSettings = (() => {
+    try {
+      return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {};
+    } catch (err) {
+      return {};
+    }
+  })();
+  function saveSettings() {
+    try {
+      localStorage.setItem(
+        SETTINGS_KEY,
+        JSON.stringify({
+          cpuCount,
+          muted: EngineAudio.isMuted(),
+          musicVol,
+          sfxVol,
+          night: nightMode,
+          bestScore,
+        })
+      );
+    } catch (err) {
+      /* persistence unavailable: ignore */
+    }
+  }
+  let cpuCount =
+    typeof savedSettings.cpuCount === "number"
+      ? clamp(Math.round(savedSettings.cpuCount), 0, CPU_MAX)
+      : CPU_COUNT;
+  nightMode = !!savedSettings.night;
+  nightMix = nightMode ? 1 : 0;
+  // Volumes are percentages (0-100); 100 = the original mix.
+  const VOL_STEP = 10;
+  let musicVol =
+    typeof savedSettings.musicVol === "number"
+      ? clamp(Math.round(savedSettings.musicVol), 0, 100)
+      : 100;
+  let sfxVol =
+    typeof savedSettings.sfxVol === "number"
+      ? clamp(Math.round(savedSettings.sfxVol), 0, 100)
+      : 100;
+  let bestScore =
+    typeof savedSettings.bestScore === "number"
+      ? Math.max(0, Math.round(savedSettings.bestScore))
+      : 0;
+  EngineAudio.setMuted(!!savedSettings.muted);
+  mutedBadge.classList.toggle("hidden", !EngineAudio.isMuted());
+  // Apply the persisted volumes and sync the overlay controls.
+  setMusicVolume(musicVol);
+  setSfxVolume(sfxVol);
+  setCpuCount(cpuCount);
+
+  // --- Camera ----------------------------------------------------------------
+  let orbitAngle = 0; // title-screen orbit angle (rad)
+  const _camPos = new THREE.Vector3();
+  const _camLook = new THREE.Vector3();
+
+  /** Title screen: orbit the map center from 30 m up. */
+  function updateReadyCamera(dt) {
+    orbitAngle += ORBIT_RATE * dt;
+    _camPos.set(
+      Math.cos(orbitAngle) * ORBIT_RADIUS,
+      focus.y + ORBIT_HEIGHT,
+      Math.sin(orbitAngle) * ORBIT_RADIUS
+    );
+    _camLook.set(0, focus.y, 0);
+    camera.position.copy(_camPos);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(_camLook);
+  }
+
+  /** "Playing" (no tank yet): sit at the chase position over the spawn point. */
+  function updatePlayingCamera() {
+    _camPos.set(CHASE_BACK, focus.y + CHASE_UP, 0); // 12 m behind (facing -Z)
+    _camLook.set(0, focus.y, -CHASE_AHEAD); // 6 m ahead
+    camera.position.copy(_camPos);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(_camLook);
+  }
+
+  // --- State -----------------------------------------------------------------
+  let state = "ready"; // ready | playing | paused | destroyed
+
+  /** Build the scoreboard rows (callsign / kills / score), best score first. */
+  function renderScoreboard() {
+    const rows = [{ name: "YOU", kills: 0, damage: 0, cls: "player" }];
+    rows.forEach((r) => (r.score = r.damage + r.kills * KILL_SCORE));
+    rows.sort((a, b) => b.score - a.score);
+    scoreboardBody.textContent = "";
+    const frag = document.createDocumentFragment();
+    for (const r of rows) {
+      const tr = document.createElement("tr");
+      if (r.cls) tr.className = r.cls;
+      const name = document.createElement("td");
+      name.textContent = r.name;
+      const k = document.createElement("td");
+      k.className = "kills";
+      k.textContent = r.kills;
+      const s = document.createElement("td");
+      s.className = "score";
+      s.textContent = r.score;
+      tr.append(name, k, s);
+      frag.appendChild(tr);
+    }
+    scoreboardBody.appendChild(frag);
+  }
+
+  function showOverlay(title, text, btnLabel) {
+    overlayTitle.textContent = title;
+    overlayText.innerHTML = text;
+    overlayBtn.textContent = btnLabel;
+    // The count controls are only useful before a run (ready/destroyed).
+    cpuControl.classList.toggle("hidden", state === "paused");
+    // The scoreboard only makes sense mid-run (paused) or after destruction.
+    const showBoard = state === "paused" || state === "destroyed";
+    scoreboard.classList.toggle("hidden", !showBoard);
+    if (showBoard) renderScoreboard();
+    overlay.classList.remove("hidden");
+  }
+
+  function hideOverlay() {
+    overlay.classList.add("hidden");
+  }
+
+  function start() {
+    const resuming = state === "paused";
+    state = "playing";
+    hideOverlay();
+    EngineAudio.start(); // user gesture: allowed to create the AudioContext
+    Music.start();
+    if (!resuming) Music.newFlight(); // fresh random combat track per run
+  }
+
+  function pause() {
+    state = "paused";
+    showOverlay("PAUSED", "Engagement suspended. The enemy fleet will hold its fire - barely.", "Resume");
+  }
+
+  function restart() {
+    // M5: fresh tank on the same map, fleet respawned, score reset.
+    state = "playing";
+    hideOverlay();
+    EngineAudio.start();
+    Music.start();
+    Music.newFlight();
+  }
+
+  // --- Menu controls ---------------------------------------------------------
+  /** Grow/shrink the enemy count (0 = training mode, a peaceful map). */
+  function setCpuCount(n) {
+    n = clamp(Math.round(n), 0, CPU_MAX);
+    cpuCount = n;
+    cpuCountEl.textContent = n;
+    cpuLabel.textContent = n === 0 ? "TRAINING" : "ENEMIES";
+    cpuMinus.disabled = n <= 0;
+    cpuPlus.disabled = n >= CPU_MAX;
+    saveSettings();
+  }
+
+  /** Set the music volume (0-100%). Applied live and persisted. */
+  function setMusicVolume(pct) {
+    pct = clamp(Math.round(pct), 0, 100);
+    musicVol = pct;
+    Music.setMusicVolume(pct / 100);
+    musicCountEl.textContent = pct;
+    musicMinus.disabled = pct <= 0;
+    musicPlus.disabled = pct >= 100;
+    saveSettings();
+  }
+
+  /** Set the SFX volume (0-100%): engine, gunfire and effects. */
+  function setSfxVolume(pct) {
+    pct = clamp(Math.round(pct), 0, 100);
+    sfxVol = pct;
+    EngineAudio.setSfxVolume(pct / 100);
+    sfxCountEl.textContent = pct;
+    sfxMinus.disabled = pct <= 0;
+    sfxPlus.disabled = pct >= 100;
+    saveSettings();
+  }
+
+  // --- Input -----------------------------------------------------------------
+  function onKeyDown(code) {
+    if (code === "KeyP" && (state === "playing" || state === "paused")) {
+      if (state === "playing") pause();
+      else start();
+      return;
+    }
+    if (code === "KeyR" && state !== "ready") {
+      restart();
+      return;
+    }
+    if (code === "KeyM") {
+      mutedBadge.classList.toggle("hidden", !EngineAudio.toggleMute());
+      saveSettings();
+      return;
+    }
+    if (code === "Enter" || code === "Space") {
+      if (state === "ready") start();
+      else if (state === "destroyed") restart();
+    }
+  }
+
+  // Any title-screen click is a user gesture: unlock audio so the menu music
+  // can play before the run starts.
+  const unlockAudio = () => {
+    EngineAudio.start();
+    Music.start();
+  };
+  cpuMinus.addEventListener("click", () => { unlockAudio(); setCpuCount(cpuCount - 1); });
+  cpuPlus.addEventListener("click", () => { unlockAudio(); setCpuCount(cpuCount + 1); });
+  musicMinus.addEventListener("click", () => { unlockAudio(); setMusicVolume(musicVol - VOL_STEP); });
+  musicPlus.addEventListener("click", () => { unlockAudio(); setMusicVolume(musicVol + VOL_STEP); });
+  sfxMinus.addEventListener("click", () => { unlockAudio(); setSfxVolume(sfxVol - VOL_STEP); });
+  sfxPlus.addEventListener("click", () => { unlockAudio(); setSfxVolume(sfxVol + VOL_STEP); });
+  timeToggle.addEventListener("click", () => { unlockAudio(); setNightMode(!nightMode); });
+
+  overlayBtn.addEventListener("click", () => {
+    if (state === "ready") start();
+    else if (state === "paused") start();
+    else if (state === "destroyed") restart();
+  });
+
+  // --- HUD -------------------------------------------------------------------
+  const COMPASS_PX_PER_DEG = 2.2;
+
+  /** Build the static compass tape once: 3 copies of the 0-360 scale so the
+   *  visible window never runs out of ticks at the wraparound edges. */
+  function buildCompassTape() {
+    const SPAN = 1080;
+    const frag = document.createDocumentFragment();
+    for (let d = 0; d <= SPAN; d += 5) {
+      const heading = d % 360;
+      let cls = "tick";
+      let label = "";
+      if (d % 30 === 0) {
+        cls += " major";
+        if (heading === 0) label = "N";
+        else if (heading === 90) label = "E";
+        else if (heading === 180) label = "S";
+        else if (heading === 270) label = "W";
+        else label = String(heading);
+      } else if (d % 15 === 0) {
+        cls += " medium";
+      } else {
+        cls += " minor";
+      }
+      const tick = document.createElement("div");
+      tick.className = cls;
+      tick.style.left = d * COMPASS_PX_PER_DEG + "px";
+      if (label) {
+        const lab = document.createElement("span");
+        lab.textContent = label;
+        tick.appendChild(lab);
+      }
+      frag.appendChild(tick);
+    }
+    compassTape.appendChild(frag);
+  }
+
+  // --- Main loop ---------------------------------------------------------------
+  let last = performance.now();
+
+  function frame(now) {
+    requestAnimationFrame(frame);
+    const dt = Math.min((now - last) / 1000, 0.05);
+    last = now;
+
+    if (state === "playing") {
+      updatePlayingCamera();
+      terrain.update(focus);
+      scenery.update(dt, focus);
+    } else if (state === "ready") {
+      // Idle scene: world gently alive, camera orbiting the map center.
+      updateReadyCamera(dt);
+      terrain.update(focus);
+      scenery.update(dt, focus);
+    } else if (state === "paused") {
+      // Frozen: keep the last camera, but let the sky/fog keep blending.
+    }
+
+    // Sun (and its shadow camera) follows the focus point.
+    sun.position.copy(focus).add(_sunOffset);
+    sun.target.position.copy(focus);
+
+    // Ease day/night toward the selected mode; re-blend the environment
+    // each frame while the transition is in flight.
+    {
+      const target = nightMode ? 1 : 0;
+      if (nightMix !== target) {
+        nightMix += (target - nightMix) * Math.min(1, dt * 2.5);
+        if (Math.abs(nightMix - target) < 0.002) nightMix = target;
+        applyEnvironment(nightMix);
+      }
+    }
+
+    EngineAudio.update(dt, null, state);
+    Music.update(dt, state);
+
+    // Keep the sky dome centered on the camera; otherwise its far side gets
+    // clipped by the far plane once the camera moves farther than
+    // (far - radius) from the origin, showing the black clear color.
+    sky.position.copy(camera.position);
+    renderer.render(scene, camera);
+  }
+
+  // --- Resize ------------------------------------------------------------------
+  function resize() {
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener("resize", resize);
+
+  // --- Go -----------------------------------------------------------------------
+  Input.init();
+  resize();
+  buildCompassTape();
+  buildWorld();
+  timeToggle.textContent = nightMode ? "NIGHT" : "DAY";
+  applyEnvironment(nightMix);
+  showOverlay(
+    "ARCADE TANK",
+    "You&rsquo;re a lone tank in a free-for-all.<br />" +
+      "Gun down the enemy fleet, arc your shells, retreat to the garage to repair." +
+      (bestScore > 0 ? "<br /><br />BEST SCORE: " + bestScore : ""),
+    "Drive"
+  );
+  requestAnimationFrame(frame);
+
+  return { onKeyDown };
+})();

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Arcade Tank</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="game-wrap">
+      <canvas id="game"></canvas>
+
+      <!-- Heads-up display. The combat elements stay hidden until M6 wires
+           them; the message feed and muted badge work from the start. -->
+      <div id="hud">
+        <div id="hud-combat" class="hidden">
+          <div id="compass"><div id="compass-tape"></div><div class="compass-caret"></div></div>
+          <div class="hud-box">
+            <div id="hpbar"><div id="hpfill"></div><span id="hplabel">HP</span></div>
+            <div class="hud-row">SPEED <span class="v" id="hud-speed">0</span> km/h</div>
+            <div class="hud-row">HEADING <span class="v" id="hud-heading">0&deg;</span></div>
+            <div class="hud-row">KILLS <span class="v" id="hud-kills">0</span></div>
+            <div class="hud-row">SCORE <span class="v" id="hud-score">0</span></div>
+            <div class="hud-row">SHELL <span class="v" id="hud-shell">READY</span></div>
+          </div>
+          <div class="hud-box right">
+            <div>W / &uarr; throttle &nbsp;&middot;&nbsp; S / &darr; reverse</div>
+            <div>A / &larr; steer left &nbsp;&middot;&nbsp; D / &rarr; steer right</div>
+            <div>SHIFT brake &nbsp;&middot;&nbsp; MOUSE aim turret</div>
+            <div>CLICK / SPACE fire MG &nbsp;&middot;&nbsp; RIGHT / X shell</div>
+            <div>P pause &nbsp;&middot;&nbsp; R restart &nbsp;&middot;&nbsp; M mute</div>
+          </div>
+          <div id="crosshair"></div>
+          <div id="gun-heat"><div id="gun-heat-fill"></div></div>
+          <div id="overheat">OVERHEAT &mdash; WAIT FOR COOLING</div>
+          <div id="garage-hint">GARAGE &mdash; REPAIRING</div>
+        </div>
+        <div id="msg-feed"></div>
+        <div id="muted" class="hidden">MUTED</div>
+      </div>
+
+      <!-- Start / pause / game-over overlay -->
+      <div id="overlay">
+        <div id="overlay-card">
+          <h1 id="overlay-title">ARCADE TANK</h1>
+          <p id="overlay-text">
+            You&rsquo;re a lone tank in a free-for-all.<br />
+            Gun down the enemy fleet, arc your shells, retreat to the<br />
+            garage to repair.
+          </p>
+          <div id="scoreboard" class="hidden">
+            <table>
+              <thead>
+                <tr><th>CALLSIGN</th><th class="kills">KILLS</th><th class="score">SCORE</th></tr>
+              </thead>
+              <tbody id="scoreboard-body"></tbody>
+            </table>
+          </div>
+          <div id="cpu-control">
+            <span id="cpu-label">ENEMIES</span>
+            <button id="cpu-minus" type="button">&minus;</button>
+            <span id="cpu-count">4</span>
+            <button id="cpu-plus" type="button">+</button>
+          </div>
+          <div id="music-control">
+            <span id="music-label">MUSIC</span>
+            <button id="music-minus" type="button">&minus;</button>
+            <span id="music-count">100</span>
+            <button id="music-plus" type="button">+</button>
+          </div>
+          <div id="sfx-control">
+            <span id="sfx-label">SFX</span>
+            <button id="sfx-minus" type="button">&minus;</button>
+            <span id="sfx-count">100</span>
+            <button id="sfx-plus" type="button">+</button>
+          </div>
+          <div id="time-control">
+            <span id="time-label">TIME</span>
+            <button id="time-toggle" type="button">DAY</button>
+          </div>
+          <button id="overlay-btn">Drive</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Classic scripts (not ES modules) so the game also runs from file:// -->
+    <script src="lib/three.min.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/audio.js"></script>
+    <script src="js/music.js"></script>
+    <script src="js/input.js"></script>
+    <script src="js/terrain.js"></script>
+    <script src="js/scenery.js"></script>
+    <script src="js/muzzle.js"></script>
+    <script src="js/main.js"></script>
+  </body>
+</html>
