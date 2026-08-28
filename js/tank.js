@@ -210,12 +210,6 @@ class Tank {
     hull.position.y = TRACK_H;
     g.add(hull);
 
-    // Sloped glacis plate at the nose (-Z).
-    const glacis = new THREE.Mesh(new THREE.BoxGeometry(HULL_WIDE * 0.92, 0.32, 1.2), hullMat);
-    glacis.position.set(0, TRACK_H + HULL_HEIGHT / 2 - 0.12, -HULL_LEN / 2 - 0.18);
-    glacis.rotation.x = 0.62;
-    g.add(glacis);
-
     // Tracks (two boxes, one per side) + six road wheels each (static).
     for (const side of [1, -1]) {
       const track = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.5, HULL_LEN + 0.1), trackMat);
@@ -250,9 +244,11 @@ class Tank {
     hatch.position.set(0.45, 0.42, 0.35);
     this.turret.add(hatch);
 
-    // Barrel (points -Z) with a muzzle brake near the tip.
-    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 3.2, 10).rotateX(Math.PI / 2), darkMat);
-    barrel.position.set(0, 0, -2.6);
+    // Barrel (points -Z) with a muzzle brake near the tip. The rear end
+    // extends past the elevation hinge (z = 0) so it stays buried inside the
+    // turret box at all pitches — no visible gap when raising/lowering.
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 4.5, 10).rotateX(Math.PI / 2), darkMat);
+    barrel.position.set(0, 0, -1.95);
     this.elev.add(barrel);
     const brake = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.5, 10).rotateX(Math.PI / 2), darkMat);
     brake.position.set(0, 0, -3.95);
