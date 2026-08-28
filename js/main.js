@@ -7,9 +7,10 @@
 // The terrain is generated ONCE per session and kept for every run; a
 // restart (M5) spawns a fresh tank on the SAME map.
 //
-// M1: no tank yet. The title screen floats over the live, seeded world
-// (terrain + trees + rocks + clouds) with an orbiting camera; "Drive" drops
-// the camera onto the chase position over the spawn point.
+// M2: the player drives a primitive tank over the map (WASD + Shift), the
+// chase camera follows from behind the hull, and the pointer-locked mouse
+// aims the turret. "Drive" spawns the tank and locks the pointer; Esc
+// (pointer-lock loss) auto-pauses; R respawns the tank on the same map.
 // ---------------------------------------------------------------------------
 
 const Game = (() => {
@@ -22,11 +23,6 @@ const Game = (() => {
   const ORBIT_RADIUS = 60; // m from the map center
   const ORBIT_HEIGHT = 30; // m above the ground at the map center
   const ORBIT_RATE = 0.05; // rad/s
-  // "Playing" (no tank yet) snaps the camera to the chase position over the
-  // spawn point, facing the direction the tank will spawn (north, -Z).
-  const CHASE_BACK = 12; // m behind the spawn point
-  const CHASE_UP = 4.5; // m
-  const CHASE_AHEAD = 6; // m ahead of the spawn point
 
   // --- DOM -------------------------------------------------------------------
   const canvas = document.getElementById("game");
@@ -224,10 +220,16 @@ const Game = (() => {
   // --- World -----------------------------------------------------------------
   let terrain = null;
   let scenery = null;
-  // Where the action is: the spawn point in M1 (the player tank from M2 on).
+  // Where the action is: the spawn point while ready, the player tank once playing.
   const focus = new THREE.Vector3();
 
-  /** Build the world ONCE: terrain, trees, rocks, clouds. */
+  // Player tank + chase camera + controller (M2). `ctx` is extended in M4.
+  let tank = null;
+  let chaseCam = null;
+  let playerController = null;
+  let ctx = null;
+
+  /** Build the world ONCE: terrain, trees, rocks, clouds, and the player tank. */
   function buildWorld() {
     // Hardcode a seed here to reproduce the identical map (e.g. `12345`).
     const seed = randomSeed();
@@ -237,6 +239,40 @@ const Game = (() => {
     new Trees(scenery, terrain, seed, null);
     new Rocks(scenery, terrain, seed, null);
     focus.set(0, terrain.heightAt(0, 0), 0);
+
+    tank = new Tank(scene, { livery: 0x8a8f94 });
+    tank.team = "player";
+    tank.callsign = "YOU";
+    chaseCam = new ChaseCamera(camera);
+    playerController = new PlayerController();
+    ctx = { player: tank, tanks: [tank], terrain };
+    spawnPlayerTank();
+  }
+
+  /** Pick a spawn heading that faces the flattest drivable ground. */
+  function spawnYaw() {
+    let bestYaw = 0;
+    let bestSlope = Infinity;
+    for (let i = 0; i < 8; i++) {
+      const yaw = (i / 8) * TAU;
+      const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+      const slope =
+        (terrain.heightAt(fx * SLOPE_AHEAD, fz * SLOPE_AHEAD) -
+          terrain.heightAt(0, 0)) /
+        SLOPE_AHEAD;
+      if (Math.abs(slope) < Math.abs(bestSlope)) {
+        bestSlope = slope;
+        bestYaw = yaw;
+      }
+    }
+    return bestYaw;
+  }
+
+  /** Place the player tank at the spawn point and snap the chase camera. */
+  function spawnPlayerTank() {
+    tank.reset(0, 0, spawnYaw(), terrain);
+    chaseCam.snap(tank);
+    focus.copy(tank.position);
   }
 
   // --- Persisted user settings (localStorage) --------------------------------
@@ -314,15 +350,6 @@ const Game = (() => {
     camera.lookAt(_camLook);
   }
 
-  /** "Playing" (no tank yet): sit at the chase position over the spawn point. */
-  function updatePlayingCamera() {
-    _camPos.set(CHASE_BACK, focus.y + CHASE_UP, 0); // 12 m behind (facing -Z)
-    _camLook.set(0, focus.y, -CHASE_AHEAD); // 6 m ahead
-    camera.position.copy(_camPos);
-    camera.up.set(0, 1, 0);
-    camera.lookAt(_camLook);
-  }
-
   // --- State -----------------------------------------------------------------
   let state = "ready"; // ready | playing | paused | destroyed
 
@@ -361,6 +388,7 @@ const Game = (() => {
     scoreboard.classList.toggle("hidden", !showBoard);
     if (showBoard) renderScoreboard();
     overlay.classList.remove("hidden");
+    Input.unlockPointer(); // overlay states run without a locked pointer
   }
 
   function hideOverlay() {
@@ -373,12 +401,21 @@ const Game = (() => {
     hideOverlay();
     EngineAudio.start(); // user gesture: allowed to create the AudioContext
     Music.start();
-    if (!resuming) Music.newFlight(); // fresh random combat track per run
+    if (!resuming) {
+      Music.newFlight(); // fresh random combat track per run
+      spawnPlayerTank(); // fresh tank at the spawn point
+    }
+    Input.lockPointer();
   }
 
   function pause() {
     state = "paused";
     showOverlay("PAUSED", "Engagement suspended. The enemy fleet will hold its fire - barely.", "Resume");
+  }
+
+  /** An unintended pointer-lock loss (Esc) auto-pauses the game. */
+  function onPointerUnlock() {
+    if (state === "playing") pause();
   }
 
   function restart() {
@@ -388,6 +425,8 @@ const Game = (() => {
     EngineAudio.start();
     Music.start();
     Music.newFlight();
+    spawnPlayerTank();
+    Input.lockPointer();
   }
 
   // --- Menu controls ---------------------------------------------------------
@@ -512,7 +551,10 @@ const Game = (() => {
     last = now;
 
     if (state === "playing") {
-      updatePlayingCamera();
+      const control = playerController.update(dt, tank, ctx);
+      tank.update(dt, control, terrain);
+      focus.copy(tank.position);
+      chaseCam.update(dt, tank);
       terrain.update(focus);
       scenery.update(dt, focus);
     } else if (state === "ready") {
@@ -539,7 +581,7 @@ const Game = (() => {
       }
     }
 
-    EngineAudio.update(dt, null, state);
+    EngineAudio.update(dt, tank, state);
     Music.update(dt, state);
 
     // Keep the sky dome centered on the camera; otherwise its far side gets
@@ -560,7 +602,7 @@ const Game = (() => {
   window.addEventListener("resize", resize);
 
   // --- Go -----------------------------------------------------------------------
-  Input.init();
+  Input.init(canvas);
   resize();
   buildCompassTape();
   buildWorld();
@@ -575,5 +617,5 @@ const Game = (() => {
   );
   requestAnimationFrame(frame);
 
-  return { onKeyDown };
+  return { onKeyDown, onPointerUnlock };
 })();
