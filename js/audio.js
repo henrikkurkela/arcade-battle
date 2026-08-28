@@ -3,10 +3,11 @@
 // ---------------------------------------------------------------------------
 // Synthesized tank audio (no assets, no build step).
 //
-// The diesel engine rumble (the basic M3 version; M6 refines it) is built
-// from a low sawtooth + triangle pair through a lowpass, plus a looped
-// white-noise bed through a bandpass. Both feed an engine gain -> SFX gain ->
-// master gain -> output, and scale with the tank's speed.
+// The diesel engine rumble is built from a low sawtooth + triangle pair
+// through a lowpass, plus a looped white-noise bed through a bandpass. Both
+// feed an engine gain -> SFX gain -> master gain -> output, and scale with
+// the player's throttle and speed (throttle alone can rev the engine at a
+// standstill). It idles on the title screen.
 //
 // One-shot effects (MG report, shell launch, explosion, crash, warning beep)
 // are short oscillator/noise bursts through filters, distance-scaled so
@@ -16,7 +17,7 @@
 // ---------------------------------------------------------------------------
 
 const EngineAudio = (() => {
-  // --- Engine tuning (basic M3 version; M6 refines) ------------------------
+  // --- Engine tuning ---------------------------------------------------------
   const ENGINE_FREQ_MIN = 55; // Hz at idle
   const ENGINE_FREQ_MAX = 90; // Hz at top speed
   const ENGINE_GAIN_IDLE = 0.22; // title-screen idle rumble
@@ -123,9 +124,10 @@ const EngineAudio = (() => {
     if (ctx.state === "suspended") ctx.resume();
   }
 
-  /** Per-frame update: the diesel rumble scales with the tank's speed.
-   *  `state` is the game state string. */
-  function update(dt, tank, state) {
+  /** Per-frame update: the diesel rumble scales with throttle and speed.
+   *  `state` is the game state string; `throttle` is the player's throttle
+   *  input (-1..1, 0 outside of playing). */
+  function update(dt, tank, state, throttle) {
     if (!started) return;
 
     let targetFreq = 0;
@@ -134,9 +136,12 @@ const EngineAudio = (() => {
       targetFreq = ENGINE_FREQ_MIN;
       targetGain = ENGINE_GAIN_IDLE;
     } else if (state === "playing" && tank) {
-      const ratio = clamp(Math.abs(tank.speed) / MAX_SPEED_FWD, 0, 1);
-      targetFreq = lerp(ENGINE_FREQ_MIN, ENGINE_FREQ_MAX, ratio);
-      targetGain = lerp(ENGINE_GAIN_MIN, ENGINE_GAIN_MAX, ratio);
+      const speedRatio = clamp(Math.abs(tank.speed) / MAX_SPEED_FWD, 0, 1);
+      // Throttle and speed both rev the engine: at a standstill the throttle
+      // alone can rev it, and coasting keeps a little rumble under the wheels.
+      const drive = clamp(Math.max(speedRatio, Math.abs(clamp(throttle || 0, -1, 1)) * 0.8), 0, 1);
+      targetFreq = lerp(ENGINE_FREQ_MIN, ENGINE_FREQ_MAX, drive);
+      targetGain = lerp(ENGINE_GAIN_MIN, ENGINE_GAIN_MAX, drive);
     }
     // paused / destroyed: frequency and gain ease to 0 (engine cut).
 

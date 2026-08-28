@@ -33,6 +33,11 @@
 // hard impact) and damage each other on body collision (speed-based, both
 // take a hit, push apart). Score = damage dealt + 500 per kill; the best
 // score persists across sessions.
+//
+// M6: the HUD is fully wired (HP bar, speed, heading + compass point, kills,
+// score, compass tape driven by the hull heading) and stays up after the
+// player is destroyed. Dust puffs kick up behind the tracks of any moving
+// tank, and the diesel engine rumble scales with throttle and speed.
 // ---------------------------------------------------------------------------
 
 const Game = (() => {
@@ -63,6 +68,10 @@ const Game = (() => {
   const SMOKE_EMIT_OFFSET = 1.5; // m behind the hull nose to spawn puffs
   const SMOKE_LIGHT = { interval: 0.18, count: 5, size: 1.4, color: 0x6a6a6a, opacity: 0.5, life: 1.6 };
   const SMOKE_HEAVY = { interval: 0.07, count: 9, size: 2.2, color: 0x2e2e2e, opacity: 0.8, life: 2.2 };
+  // Dust (M6): tan puffs behind the tracks while driving, scaled by speed.
+  const DUST_SPEED_MIN = 2; // m/s; dust puffs start above this
+  const DUST_INTERVAL = 0.08; // s between puff batches (faster at speed)
+  const DUST_COLOR = 0x8a7a5a; // tan
   // 16 distinct liveries (tank-flavored).
   const CPU_LIVERIES = [
     0x3a4150, 0x556b2f, 0x8a4b3a, 0x3f5d7a, 0x6b5b95, 0x2f6f6f,
@@ -135,12 +144,11 @@ const Game = (() => {
   const sfxPlus = document.getElementById("sfx-plus");
   const timeToggle = document.getElementById("time-toggle");
   const hudCombat = document.getElementById("hud-combat");
-  const compass = document.getElementById("compass");
-  const hudSpeedRow = document.getElementById("hud-speed-row");
-  const hudHeadingRow = document.getElementById("hud-heading-row");
-  const hudKillsRow = document.getElementById("hud-kills-row");
-  const hudScoreRow = document.getElementById("hud-score-row");
-  const hpBar = document.getElementById("hpbar");
+  const hpFill = document.getElementById("hpfill");
+  const hudSpeed = document.getElementById("hud-speed");
+  const hudHeading = document.getElementById("hud-heading");
+  const hudKills = document.getElementById("hud-kills");
+  const hudScore = document.getElementById("hud-score");
   const hudShell = document.getElementById("hud-shell");
   const crosshair = document.getElementById("crosshair");
   const gunHeat = document.getElementById("gun-heat");
@@ -768,6 +776,49 @@ const Game = (() => {
     });
   }
 
+  // --- Dust (M6) ---------------------------------------------------------------
+  // While a tank drives faster than DUST_SPEED_MIN it kicks up small tan
+  // puffs behind the tracks: 3-6 particles every ~0.08 s, with the rate and
+  // size scaling with speed and an extra burst on hard turns.
+  function emitDust(t, dt, steer) {
+    if (!t.alive) return;
+    const speed = Math.abs(t.speed);
+    if (speed <= DUST_SPEED_MIN) return;
+    const rate = clamp(speed / MAX_SPEED_FWD, 0, 1);
+    t._dustTimer = (t._dustTimer || 0) + dt;
+    const interval = DUST_INTERVAL * (1.6 - 0.6 * rate); // faster at speed
+    if (t._dustTimer < interval) return;
+    t._dustTimer = 0;
+    // Puff origin: behind the hull, on one of the track centerlines (the
+    // sides alternate so the trail reads as both tracks working).
+    const fwd = t.forward;
+    const rx = -fwd.z, rz = fwd.x; // right vector (perpendicular to fwd)
+    t._dustSide = t._dustSide === 1 ? -1 : 1;
+    const off = HULL_WIDE / 2 + 0.28; // track centerline offset
+    _smokePt.copy(t.position);
+    _smokePt.x += fwd.x * -HULL_LEN * 0.5 + rx * off * t._dustSide;
+    _smokePt.z += fwd.z * -HULL_LEN * 0.5 + rz * off * t._dustSide;
+    _smokePt.y -= 0.35; // near the ground
+    spawnSmoke(_smokePt, {
+      count: 3 + Math.round(rate * 3), // 3-6 particles
+      size: 1.2 * (0.8 + 0.5 * rate),
+      color: DUST_COLOR,
+      opacity: 0.45,
+      life: 1.2,
+      sx: 1.4, sy: 0.4, sz: 0.9,
+      vh: 0.6, vyLo: 0.2, vyHi: 1.0,
+    });
+    // Extra burst on a hard turn at speed.
+    if (Math.abs(steer) > 0.7 && speed > 8) {
+      spawnSmoke(_smokePt, {
+        count: 6, size: 1.6, color: DUST_COLOR,
+        opacity: 0.5, life: 1.4,
+        sx: 2.0, sy: 0.5, sz: 1.2,
+        vh: 1.0, vyLo: 0.3, vyHi: 1.4,
+      });
+    }
+  }
+
   // --- Collisions (M5) -------------------------------------------------------
   /** Credit damage to its shooter (player or AI) for the scoreboard. */
   function recordDamage(owner, victim, dealt) {
@@ -1160,9 +1211,27 @@ const Game = (() => {
     compassTape.appendChild(frag);
   }
 
-  /** M3 HUD: shell status, MG heat bar, OVERHEAT warning. (M6 adds the rest.) */
+  /** M6 HUD: HP bar, speed, heading (degrees + compass point), kills, score,
+   *  shell status, MG heat bar, OVERHEAT warning, and the compass tape
+   *  (driven by the hull heading). Visible while playing and after the
+   *  player is destroyed (the last readout stays up under the overlay). */
   function updateHud() {
-    if (state !== "playing") return;
+    if (state !== "playing" && state !== "destroyed") return;
+    // HP bar: green above 50%, amber above 25%, red below.
+    const hpPct = Math.max(0, (tank.hp / tank.maxHp) * 100);
+    hpFill.style.width = hpPct + "%";
+    hpFill.style.background = hpPct > 50 ? "#4caf50" : hpPct > 25 ? "#ffb300" : "#f44336";
+    // Speed (km/h) and heading (degrees + compass point).
+    hudSpeed.textContent = Math.round(Math.abs(tank.speed) * 3.6);
+    const bearing = ((360 - THREE.MathUtils.radToDeg(tank.yaw)) % 360 + 360) % 360;
+    const card = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(bearing / 45) % 8];
+    hudHeading.textContent = Math.round(bearing) + "\u00B0 " + card;
+    // Slide the tape so the current bearing sits under the center caret.
+    const center = compassTape.parentElement.clientWidth / 2;
+    compassTape.style.transform =
+      "translateX(" + (center - (bearing + 360) * COMPASS_PX_PER_DEG) + "px)";
+    hudKills.textContent = kills;
+    hudScore.textContent = damageDealt + kills * KILL_SCORE;
     // Shell status: READY, or the reload countdown (red while reloading).
     if (shellReload > 0) {
       hudShell.textContent = shellReload.toFixed(1) + "s";
@@ -1175,12 +1244,12 @@ const Game = (() => {
     // red while the gun is locked out.
     if (gunTemp >= 50) gunHeatShown = true;
     else if (gunTemp <= 0) gunHeatShown = false;
-    gunHeat.classList.toggle("hidden", !gunHeatShown);
+    gunHeat.classList.toggle("hidden", !(state === "playing" && gunHeatShown));
     const heatPct = (gunTemp / GUN_MAX_TEMP) * 100;
     gunHeatFill.style.width = heatPct + "%";
     gunHeatFill.style.background = gunOverheated ? "#f44336" : heatPct > 75 ? "#ff5722" : "#ffb300";
     // OVERHEAT warning: a beep the moment it appears.
-    const overheating = gunOverheated;
+    const overheating = state === "playing" && gunOverheated;
     overheat.classList.toggle("hidden", !overheating);
     if (overheating && !overheatWarned) EngineAudio.warnBeep();
     overheatWarned = overheating;
@@ -1224,6 +1293,7 @@ const Game = (() => {
       tank.update(dt, control, terrain);
       blockObstacle(tank, _prevPos);
       emitDamageSmoke(tank, dt);
+      emitDust(tank, dt, control.steer);
       tickCooldowns(tank, dt);
       focus.copy(tank.position);
 
@@ -1279,6 +1349,7 @@ const Game = (() => {
         cp.update(dt, ac, terrain);
         blockObstacle(cp, _prevPos);
         emitDamageSmoke(cp, dt);
+        emitDust(cp, dt, ac.steer);
         tickCooldowns(cp, dt);
         if (ac.firing) {
           tracers.fire(cp, cp.muzzleWorld(_muzzle), cp.barrelDir(_barrel), MG_DAMAGE_AI);
@@ -1370,11 +1441,11 @@ const Game = (() => {
       }
     }
 
-    EngineAudio.update(dt, tank, state);
+    EngineAudio.update(dt, tank, state, state === "playing" ? playerController.control.throttle : 0);
     Music.update(dt, state);
 
-    // Effects + HUD (M3).
-    hudCombat.classList.toggle("hidden", state !== "playing");
+    // Effects + HUD (M6: visible while playing and after destruction).
+    hudCombat.classList.toggle("hidden", !(state === "playing" || state === "destroyed"));
     updateSmoke(dt);
     debris.update(dt, terrain);
     flashes.update(dt);
@@ -1405,20 +1476,6 @@ const Game = (() => {
   resize();
   buildCompassTape();
   buildWorld();
-  // M3 wires the crosshair, heat bar, overheat warning and shell status; M5
-  // wires the garage hint. The rest of the HUD (HP bar, speed/heading/kills/
-  // score rows, compass, control box) stays hidden until M6.
-  for (const el of [
-    compass,
-    hudSpeedRow,
-    hudHeadingRow,
-    hudKillsRow,
-    hudScoreRow,
-    hpBar,
-    document.querySelector(".hud-box.right"),
-  ]) {
-    el.classList.add("hidden");
-  }
   timeToggle.textContent = nightMode ? "NIGHT" : "DAY";
   applyEnvironment(nightMix);
   showOverlay(
