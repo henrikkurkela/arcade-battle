@@ -123,6 +123,7 @@ class Tank {
     this.hullRoll = 0;
     this.hp = this.maxHp;
     this.alive = true;
+    this.group.visible = true;
     this._syncGroup();
   }
 

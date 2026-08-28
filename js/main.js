@@ -17,6 +17,14 @@
 // synthesized distance-scaled sound, camera shake, the combat HUD subset
 // (heat bar, shell status, crosshair) and the plane's smoke-burst recipe for
 // shell detonations.
+//
+// M4: a fleet of AI tanks (TankAI) hunts the player and each other — nearest-
+// enemy targeting, lead pursuit, slope-aware steering, a battle-area leash,
+// MG sprays and rare arced shells. Destroyed AI tanks explode (smoke + boom)
+// and respawn 3 s later at a new point; the ENEMIES control (0-16) grows and
+// shrinks the fleet live. Kill attribution feeds the message feed and the
+// scoreboard (per-AI tallies keyed by the Tank object, which persists across
+// respawns).
 // ---------------------------------------------------------------------------
 
 const Game = (() => {
@@ -34,6 +42,44 @@ const Game = (() => {
   const SHELL_RELOAD = 2.5; // s to reload the one shell in the breech
   const CAM_SHAKE_FIRE = 0.02; // camera shake per shell fired
   const CAM_SHAKE_HIT = 0.04; // camera shake per HP the player takes
+
+  // --- AI fleet (M4) ---------------------------------------------------------
+  const CPU_RESPAWN_DELAY = 3; // s before a destroyed CPU reappears
+  const MG_DAMAGE_AI = 5; // damage per AI tracer
+  const CAM_SHAKE_DESTROYED = 1.6; // camera shake when the player is destroyed
+  const OVERLAY_DELAY = 0.8; // s the destruction registers before the panel appears
+  // Damage smoke: a tank at or below these HP ratios trails smoke (checked
+  // each frame) — light at <=50%, heavy (burning) at <=20%.
+  const SMOKE_LIGHT_RATIO = 0.5;
+  const SMOKE_HEAVY_RATIO = 0.2;
+  const SMOKE_EMIT_OFFSET = 1.5; // m behind the hull nose to spawn puffs
+  const SMOKE_LIGHT = { interval: 0.18, count: 5, size: 1.4, color: 0x6a6a6a, opacity: 0.5, life: 1.6 };
+  const SMOKE_HEAVY = { interval: 0.07, count: 9, size: 2.2, color: 0x2e2e2e, opacity: 0.8, life: 2.2 };
+  // 16 distinct liveries (tank-flavored).
+  const CPU_LIVERIES = [
+    0x3a4150, 0x556b2f, 0x8a4b3a, 0x3f5d7a, 0x6b5b95, 0x2f6f6f,
+    0xb3372f, 0xc96a2b, 0xbf9b30, 0x7a9a2f, 0x3f7a33, 0x3585a0,
+    0x2a3f6e, 0x8e3b6e, 0x7a2f4f, 0x9a7a4a,
+  ];
+  // Callsigns named after each livery's main color.
+  const CPU_NAMES = {
+    0x3a4150: "Slate Boar",
+    0x556b2f: "Olive Brawler",
+    0x8a4b3a: "Rust Ram",
+    0x3f5d7a: "Blue Bastion",
+    0x6b5b95: "Purple Raider",
+    0x2f6f6f: "Teal Terrier",
+    0xb3372f: "Red Rammer",
+    0xc96a2b: "Orange Onslaught",
+    0xbf9b30: "Gold Goliath",
+    0x7a9a2f: "Lime Lasher",
+    0x3f7a33: "Green Grendel",
+    0x3585a0: "Cyan Crusher",
+    0x2a3f6e: "Navy Nightstalker",
+    0x8e3b6e: "Magenta Mauler",
+    0x7a2f4f: "Maroon Marauder",
+    0x9a7a4a: "Sand Scorpion",
+  };
 
   // --- Title-screen camera ---------------------------------------------------
   const ORBIT_RADIUS = 60; // m from the map center
@@ -89,11 +135,6 @@ const Game = (() => {
     msgFeed.appendChild(el);
     while (msgFeed.children.length > MSG_MAX) msgFeed.firstChild.remove();
     setTimeout(() => el.remove(), MSG_LIFE_MS);
-  }
-
-  /** Display name of a shooter (player or CPU tank) for messages. */
-  function shooterName(owner) {
-    return owner === tank ? "You" : owner.callsign;
   }
 
   // --- Renderer --------------------------------------------------------------
@@ -276,9 +317,17 @@ const Game = (() => {
   let shellReload = 0; // s until the shell is ready again (0 = READY)
   let kills = 0;
   let damageDealt = 0; // total HP the player has dealt (score)
+  let fleet = []; // M4: [{ tank, ai, respawnTimer }]
+  // Scoreboard tallies for AI shooters: keyed by the Tank object, which
+  // persists across respawns (the same object is reset, not rebuilt).
+  const shooterStats = new Map(); // Tank -> { kills, damage }
+  let distance = 0; // meters driven this run (game-over text, M5)
+  let destroyReason = ""; // how the player was destroyed (M5)
+  let overlayDelay = 0; // s until the destroyed overlay appears
   const _muzzle = new THREE.Vector3();
   const _barrel = new THREE.Vector3();
   const _aimPt = new THREE.Vector3();
+  const _smokePt = new THREE.Vector3();
 
   /** Build the world ONCE: terrain, trees, rocks, clouds, and the player tank. */
   function buildWorld() {
@@ -300,27 +349,27 @@ const Game = (() => {
     tracers = new Tracers(scene);
     shells = new Shells(scene);
     flashes = new MuzzleFlashes(scene);
-    // Both weapons share the same kill/damage attribution.
+    // Both weapons share the same kill/damage attribution (M4: the AI fleet
+    // feeds the same tallies; the player's shots never hit the player).
     tracers.onKill = shells.onKill = (owner, victim) => {
-      if (victim === tank) {
-        addMessage(shooterName(owner) + " destroyed you");
-        return;
-      }
-      if (owner === tank) {
-        kills++;
-        addMessage("You destroyed " + victim.callsign);
-      } else {
-        addMessage(owner.callsign + " destroyed " + victim.callsign);
-      }
+      if (victim === tank) return; // death itself is handled via !tank.alive below
+      const slot = fleet.find((s) => s.tank === victim);
+      if (slot) destroyAiTank(slot, owner);
     };
     tracers.onDamage = shells.onDamage = (owner, victim, dealt) => {
-      if (owner === tank) damageDealt += dealt;
+      if (owner === tank) {
+        damageDealt += dealt;
+      } else {
+        shooterStatsFor(owner).damage += dealt;
+      }
       // Small camera shake when the player is hit.
       if (victim === tank && chaseCam) {
         chaseCam.shake = Math.max(chaseCam.shake, CAM_SHAKE_HIT * dealt);
       }
     };
     spawnPlayerTank();
+    // Apply the persisted enemy count (the player tank must exist first).
+    setCpuCount(cpuCount);
   }
 
   /** Pick a spawn heading that faces the flattest drivable ground. */
@@ -356,10 +405,148 @@ const Game = (() => {
     shellReload = 0;
     kills = 0;
     damageDealt = 0;
+    distance = 0;
+    destroyReason = "";
+    overlayDelay = 0;
+    shooterStats.clear();
     tracers.clear();
     shells.clear();
     flashes.clear();
     clearSmokes();
+  }
+
+  // --- AI fleet (M4) ---------------------------------------------------------
+  /** Remove a Tank's mesh from the scene and free its GPU resources. */
+  function disposeTank(t) {
+    if (!t) return;
+    scene.remove(t.group);
+    t.group.traverse((o) => {
+      if (o.isMesh) {
+        o.geometry.dispose();
+        if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
+        else o.material.dispose();
+      }
+    });
+  }
+
+  /** Find a drivable spawn point 400-800 m from the player: the ground there
+    *  must be flatter than the slope limit (retry sampling until it is). */
+  function findAiSpawn() {
+    for (let i = 0; i < 24; i++) {
+      const ang = Math.random() * TAU;
+      const dist = 400 + Math.random() * 400;
+      const x = tank.position.x + Math.cos(ang) * dist;
+      const z = tank.position.z + Math.sin(ang) * dist;
+      const h0 = terrain.heightAt(x, z);
+      let ok = true;
+      for (let k = 0; k < 8; k++) {
+        const a = (k / 8) * TAU;
+        const slope =
+          (terrain.heightAt(x + Math.cos(a) * SLOPE_AHEAD, z + Math.sin(a) * SLOPE_AHEAD) - h0) /
+          SLOPE_AHEAD;
+        if (Math.abs(slope) > SLOPE_TAN) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) return { x, z };
+    }
+    // The map is mostly drivable; fall back to the last sample.
+    const ang = Math.random() * TAU;
+    const dist = 400 + Math.random() * 400;
+    return { x: tank.position.x + Math.cos(ang) * dist, z: tank.position.z + Math.sin(ang) * dist };
+  }
+
+  /** Spawn a hostile CPU tank 400-800 m from the player, facing it. */
+  function spawnAiTank(livery) {
+    const p = findAiSpawn();
+    const t = new Tank(scene, { livery });
+    // Unique team per CPU so their tracers/shells hit each other (friendly
+    // fire); the shared weapon pools only skip same-team targets.
+    t.team = "cpu" + (fleet.length + 1);
+    t.callsign = CPU_NAMES[livery];
+    // Nose (-sin(yaw), 0, -cos(yaw)) should point at the player.
+    const yaw = Math.atan2(-(tank.position.x - p.x), -(tank.position.z - p.z));
+    t.reset(p.x, p.z, yaw, terrain);
+    fleet.push({ tank: t, ai: new TankAI(), respawnTimer: 0 });
+  }
+
+  /** Get (creating if needed) the scoreboard tally for an AI shooter. */
+  function shooterStatsFor(shooter) {
+    let s = shooterStats.get(shooter);
+    if (!s) {
+      s = { kills: 0, damage: 0 };
+      shooterStats.set(shooter, s);
+    }
+    return s;
+  }
+
+  /** A CPU tank was destroyed: hide it, boom, start the respawn timer. */
+  function destroyAiTank(slot, killer) {
+    const cp = slot.tank;
+    if (slot.respawnTimer > 0) return; // already destroyed, respawn pending
+    cp.alive = false;
+    cp.hp = 0;
+    cp.group.visible = false;
+    const dist = cp.position.distanceTo(tank.position);
+    spawnSmoke(cp.position);
+    EngineAudio.crash(dist);
+    slot.respawnTimer = CPU_RESPAWN_DELAY;
+    slot.ai.reset();
+    if (killer === tank) {
+      kills++;
+      addMessage("You destroyed " + cp.callsign);
+    } else {
+      addMessage(killer.callsign + " destroyed " + cp.callsign);
+    }
+  }
+
+  /** Bring a downed CPU back at a new spawn point (same Tank object). */
+  function respawnAiTank(slot) {
+    const p = findAiSpawn();
+    const yaw = Math.atan2(-(tank.position.x - p.x), -(tank.position.z - p.z));
+    slot.tank.group.visible = true;
+    slot.tank.reset(p.x, p.z, yaw, terrain);
+    slot.ai.reset();
+  }
+
+  /** Grow/shrink the fleet to `n` tanks (0 = training mode, a peaceful map).
+    *  Called from the menu (before a run) and on the title screen. */
+  function setFleetCount(n) {
+    n = clamp(Math.round(n), 0, CPU_LIVERIES.length);
+    while (fleet.length > n) {
+      disposeTank(fleet.pop().tank);
+    }
+    while (fleet.length < n) {
+      spawnAiTank(CPU_LIVERIES[fleet.length % CPU_LIVERIES.length]);
+    }
+    return n;
+  }
+
+  /** Respawn the whole fleet at fresh points (restart). */
+  function respawnFleet() {
+    for (const slot of fleet) {
+      slot.respawnTimer = 0;
+      respawnAiTank(slot);
+    }
+  }
+
+  /** The player was destroyed: hide the tank, boom, shake, delayed overlay.
+    *  (M5 adds the reason, distance, score and the full scoreboard.) */
+  function destroyPlayer(reason) {
+    state = "destroyed";
+    destroyReason = reason;
+    tank.alive = false;
+    const finalScore = damageDealt + kills * KILL_SCORE;
+    if (finalScore > bestScore) {
+      bestScore = finalScore;
+      saveSettings();
+    }
+    tank.group.visible = false;
+    spawnSmoke(tank.position);
+    EngineAudio.crash(0);
+    chaseCam.shake = CAM_SHAKE_DESTROYED;
+    overlayDelay = OVERLAY_DELAY; // let the impact register before the panel appears
   }
 
   // --- Smoke ------------------------------------------------------------------
@@ -433,6 +620,28 @@ const Game = (() => {
     smokes.length = 0;
   }
 
+  // --- Damage smoke (M4) -------------------------------------------------------
+  // While a tank's HP is low it trails smoke: light at <=50%, heavy (burning)
+  // at <=20%. Puffs spawn behind the hull; the tank moves on, leaving a trail.
+  function emitDamageSmoke(t, dt) {
+    if (!t.alive) return;
+    const ratio = t.hp / t.maxHp;
+    const tier = ratio <= SMOKE_HEAVY_RATIO ? SMOKE_HEAVY
+                : ratio <= SMOKE_LIGHT_RATIO ? SMOKE_LIGHT
+                : null;
+    if (!tier) return;
+    t._smokeTimer = (t._smokeTimer || 0) + dt;
+    if (t._smokeTimer < tier.interval) return;
+    t._smokeTimer = 0;
+    // Puff origin: behind the hull nose, at hull height.
+    _smokePt.copy(t.position).addScaledVector(t.forward, -SMOKE_EMIT_OFFSET);
+    spawnSmoke(_smokePt, {
+      count: tier.count, size: tier.size, color: tier.color,
+      opacity: tier.opacity, life: tier.life,
+      sx: 0.8, sy: 0.5, sz: 0.8, vh: 1.5, vyLo: 0.5, vyHi: 2.0,
+    });
+  }
+
   // --- Persisted user settings (localStorage) --------------------------------
   // Enemy count, volumes, mute, night and best score survive a page reload.
   // Storage may be unavailable (private mode, file://, quota) — every access
@@ -484,10 +693,10 @@ const Game = (() => {
       : 0;
   EngineAudio.setMuted(!!savedSettings.muted);
   mutedBadge.classList.toggle("hidden", !EngineAudio.isMuted());
-  // Apply the persisted volumes and sync the overlay controls.
+  // Apply the persisted volumes and sync the overlay controls. (The enemy
+  // count is applied in buildWorld(), once the player tank exists.)
   setMusicVolume(musicVol);
   setSfxVolume(sfxVol);
-  setCpuCount(cpuCount);
 
   // --- Camera ----------------------------------------------------------------
   let orbitAngle = 0; // title-screen orbit angle (rad)
@@ -513,7 +722,11 @@ const Game = (() => {
 
   /** Build the scoreboard rows (callsign / kills / score), best score first. */
   function renderScoreboard() {
-    const rows = [{ name: "YOU", kills: 0, damage: 0, cls: "player" }];
+    const rows = [{ name: "YOU", kills, damage: damageDealt, cls: "player" }];
+    for (const slot of fleet) {
+      const s = shooterStats.get(slot.tank) || { kills: 0, damage: 0 };
+      rows.push({ name: slot.tank.callsign, kills: s.kills, damage: s.damage, cls: "" });
+    }
     rows.forEach((r) => (r.score = r.damage + r.kills * KILL_SCORE));
     rows.sort((a, b) => b.score - a.score);
     scoreboardBody.textContent = "";
@@ -562,6 +775,7 @@ const Game = (() => {
     if (!resuming) {
       Music.newFlight(); // fresh random combat track per run
       spawnPlayerTank(); // fresh tank at the spawn point
+      respawnFleet(); // fresh fleet at fresh points (M4)
     }
     Input.lockPointer();
   }
@@ -577,25 +791,27 @@ const Game = (() => {
   }
 
   function restart() {
-    // M5: fresh tank on the same map, fleet respawned, score reset.
+    // Fresh tank on the same map, fleet respawned, score reset.
     state = "playing";
     hideOverlay();
     EngineAudio.start();
     Music.start();
     Music.newFlight();
     spawnPlayerTank();
+    respawnFleet();
     Input.lockPointer();
   }
 
   // --- Menu controls ---------------------------------------------------------
-  /** Grow/shrink the enemy count (0 = training mode, a peaceful map). */
+  /** Grow/shrink the enemy count (0 = training mode, a peaceful map). The
+    *  fleet is adjusted live, so the title screen shows the tanks. */
   function setCpuCount(n) {
     n = clamp(Math.round(n), 0, CPU_MAX);
-    cpuCount = n;
-    cpuCountEl.textContent = n;
-    cpuLabel.textContent = n === 0 ? "TRAINING" : "ENEMIES";
-    cpuMinus.disabled = n <= 0;
-    cpuPlus.disabled = n >= CPU_MAX;
+    cpuCount = setFleetCount(n);
+    cpuCountEl.textContent = cpuCount;
+    cpuLabel.textContent = cpuCount === 0 ? "TRAINING" : "ENEMIES";
+    cpuMinus.disabled = cpuCount <= 0;
+    cpuPlus.disabled = cpuCount >= CPU_MAX;
     saveSettings();
   }
 
@@ -752,12 +968,20 @@ const Game = (() => {
     last = now;
 
     if (state === "playing") {
+      // All alive tanks (player + fleet): the weapon pools and the AI share
+      // this list for hit tests and targeting.
+      const aliveTanks = [tank];
+      for (const slot of fleet) if (slot.tank.alive) aliveTanks.push(slot.tank);
+      ctx.tanks = aliveTanks;
+
+      // Player: keyboard + mouse -> control -> physics.
       const control = playerController.update(dt, tank, ctx);
       tank.update(dt, control, terrain);
+      emitDamageSmoke(tank, dt);
       focus.copy(tank.position);
 
       // MG: hold LMB/Space. Sustained fire heats the gun; at GUN_MAX_TEMP it
-      // overheats and cannot fire until fully cool.
+      // overheates and cannot fire until fully cool.
       mgCooldown -= dt;
       if (control.firing && mgCooldown <= 0 && !gunOverheated) {
         mgCooldown = MG_FIRE_INTERVAL;
@@ -785,22 +1009,79 @@ const Game = (() => {
         }
       }
 
-      // Tracers: integrate, collide, damage.
-      tracers.update(dt, ctx.tanks, terrain);
+      // AI fleet: AI -> physics -> firing -> respawn (M4).
+      for (const slot of fleet) {
+        const cp = slot.tank;
+        if (!cp.alive) {
+          slot.respawnTimer -= dt;
+          if (slot.respawnTimer <= 0) respawnAiTank(slot);
+          continue;
+        }
+        const ac = slot.ai.update(dt, cp, ctx);
+        cp.update(dt, ac, terrain);
+        emitDamageSmoke(cp, dt);
+        if (ac.firing) {
+          tracers.fire(cp, cp.muzzleWorld(_muzzle), cp.barrelDir(_barrel), MG_DAMAGE_AI);
+          flashes.flash(_muzzle);
+          EngineAudio.mgFire(cp.position.distanceTo(tank.position));
+        }
+        // Rare AI shells: unguided splash on a ballistic arc (dir from the AI).
+        if (ac.shellFiring) {
+          if (shells.fire(cp, cp.muzzleWorld(_muzzle), slot.ai.shellDir)) {
+            flashes.flash(_muzzle);
+            EngineAudio.shellLaunch(cp.position.distanceTo(tank.position));
+          }
+        }
+      }
 
-      // Shells: integrate (arc), detonate (splash), boom + blast effect.
-      shells.update(dt, ctx.tanks, terrain, (pos) => {
-        EngineAudio.shellBoom(pos.distanceTo(tank.position));
-        flashes.flash(pos);
-        spawnSmoke(pos, {
-          count: 26, size: 2.6, color: 0x3a3a3a, opacity: 0.85, life: 1.4,
-          sx: 2.5, sy: 1.5, sz: 2.5, vh: 9, vyLo: 1, vyHi: 5,
+      if (state === "playing") {
+        // Tracers: integrate, collide, damage.
+        tracers.update(dt, ctx.tanks, terrain);
+
+        // Shells: integrate (arc), detonate (splash), boom + blast effect.
+        shells.update(dt, ctx.tanks, terrain, (pos) => {
+          EngineAudio.shellBoom(pos.distanceTo(tank.position));
+          flashes.flash(pos);
+          spawnSmoke(pos, {
+            count: 26, size: 2.6, color: 0x3a3a3a, opacity: 0.85, life: 1.4,
+            sx: 2.5, sy: 1.5, sz: 2.5, vh: 9, vyLo: 1, vyHi: 5,
+          });
         });
-      });
 
+        // Player shot down?
+        if (!tank.alive) destroyPlayer("You were destroyed.");
+      }
+
+      if (state === "playing") {
+        distance += Math.abs(tank.speed) * dt;
+        chaseCam.update(dt, tank);
+        terrain.update(focus);
+        scenery.update(dt, focus);
+      }
+    } else if (state === "destroyed") {
+      // Frozen: keep the last camera, let the world stay alive, and show the
+      // overlay once the impact has registered.
+      scenery.update(dt, tank.position);
       chaseCam.update(dt, tank);
-      terrain.update(focus);
-      scenery.update(dt, focus);
+      if (overlayDelay > 0) {
+        overlayDelay -= dt;
+        if (overlayDelay <= 0) {
+          const km = (distance / 1000).toFixed(1);
+          const score = damageDealt + kills * KILL_SCORE;
+          showOverlay(
+            "DESTROYED",
+            destroyReason +
+              "<br />You drove " +
+              km +
+              " km. Kills: " +
+              kills +
+              ". Score: " +
+              score +
+              ".",
+            "Drive again (R)"
+          );
+        }
+      }
     } else if (state === "ready") {
       // Idle scene: world gently alive, camera orbiting the map center.
       updateReadyCamera(dt);
