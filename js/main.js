@@ -174,6 +174,7 @@ const Game = (() => {
   const TREE_FELL_SPEED = 12; // m/s; at/above this a tree in the way is felled
   const TREE_FELL_SPEED_CUT = 0.3; // fraction of speed lost plowing through
   const CAM_SHAKE_FELL = 0.15; // camera shake when the player fells a tree
+  const AA_COLLIDE_RADIUS = 5; // m; the AA gun's pad radius (solid, enabled or disabled)
 
   // --- Vehicle selection (M9) --------------------------------------------------
   const VEHICLE_TANK = "tank";
@@ -1502,6 +1503,42 @@ const Game = (() => {
     }
   }
 
+  /** Tank/rifleman vs AA gun: the guns are solid structures (enabled or
+   *  disabled). If the unit's new position overlaps a gun's pad, cancel the
+   *  movement step (it stops at the gun). For tanks, a hard impact chips a
+   *  little HP (per-gun cooldown); riflemen are blocked but take no damage.
+   *  Ramming never damages or disables the gun — it's a physical collision. */
+  function blockAAGun(t, prev, chip) {
+    if (!aaGuns) return;
+    const hit = [];
+    for (const g of aaGuns.guns) {
+      if (
+        Math.hypot(t.position.x - g.position.x, t.position.z - g.position.z) <
+        COLLIDE_RADIUS + AA_COLLIDE_RADIUS
+      ) {
+        hit.push(g);
+      }
+    }
+    if (!hit.length) return;
+    const impact = Math.abs(t.speed);
+    t.position.copy(prev); // blocked: stop at the gun
+    t.speed = 0;
+    t.group.position.copy(t.position);
+    if (!chip || impact <= OBSTACLE_SPEED_MIN) return;
+    t._obCd = t._obCd || new Map();
+    let canChip = false;
+    for (const g of hit) {
+      const cd = t._obCd.get(g);
+      if (cd === undefined || cd <= 0) canChip = true;
+      t._obCd.set(g, OBSTACLE_COOLDOWN);
+    }
+    if (!canChip) return;
+    // No kind: unarmored physical damage (armor does not stop a collision).
+    if (t.takeDamage(OBSTACLE_DMG) > 0 && t.hp <= 0 && t === player) {
+      destroyReason = "You rammed an AA gun.";
+    }
+  }
+
   /** Tank vs tank: for each alive pair within TANK_RAM_RANGE, push the hulls
    *  apart and (per-pair cooldown) damage both by the excess approach speed. */
   function collideTanks(tanks) {
@@ -2025,6 +2062,7 @@ const Game = (() => {
         _prevPos.copy(tank.position);
         tank.update(dt, control, terrain);
         blockObstacle(tank, _prevPos);
+        blockAAGun(tank, _prevPos, true);
         emitDamageSmoke(tank, dt);
         emitDust(tank, dt, control.steer);
         tickCooldowns(tank, dt);
@@ -2047,7 +2085,7 @@ const Game = (() => {
           mgCooldown = MG_FIRE_INTERVAL;
           gunTemp = Math.min(GUN_MAX_TEMP, gunTemp + GUN_HEAT_PER_SHOT);
           if (gunTemp >= GUN_MAX_TEMP) gunOverheated = true;
-          tracers.fire(tank, tank.muzzleWorld(_muzzle), tank.barrelDir(_barrel), MG_DAMAGE_PLAYER);
+          tracers.fire(tank, tank.mgMuzzleWorld(_muzzle), tank.barrelDir(_barrel), MG_DAMAGE_PLAYER);
           flashes.flash(_muzzle);
           EngineAudio.mgFire(0);
         }
@@ -2119,11 +2157,12 @@ const Game = (() => {
         _prevPos.copy(cp.position);
         cp.update(dt, ac, terrain);
         blockObstacle(cp, _prevPos);
+        blockAAGun(cp, _prevPos, true);
         emitDamageSmoke(cp, dt);
         emitDust(cp, dt, ac.steer);
         tickCooldowns(cp, dt);
         if (ac.firing) {
-          tracers.fire(cp, cp.muzzleWorld(_muzzle), cp.barrelDir(_barrel), MG_DAMAGE_AI);
+          tracers.fire(cp, cp.mgMuzzleWorld(_muzzle), cp.barrelDir(_barrel), MG_DAMAGE_AI);
           flashes.flash(_muzzle);
           EngineAudio.mgFire(cp.position.distanceTo(player.position));
         }
@@ -2148,6 +2187,7 @@ const Game = (() => {
         _prevPos.copy(r.position);
         r.update(dt, rc, terrain);
         blockObstacle(r, _prevPos);
+        blockAAGun(r, _prevPos, false); // blocked by AA guns, but takes no damage
         if (!r.alive) destroyRifleman(slot, null); // e.g. died to obstacle chip damage
         if (rc.firing && r.alive) {
           tracers.fire(r, r.muzzleWorld(_muzzle), slot.ai.aimDir, MG_DAMAGE_AI);

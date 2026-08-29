@@ -202,6 +202,12 @@ class Tank {
     return this.muzzleObj.getWorldPosition(out);
   }
 
+  /** World-space MG muzzle point (the shorter right-side barrel tip). */
+  mgMuzzleWorld(out) {
+    this.group.updateMatrixWorld(true);
+    return this.mgMuzzleObj.getWorldPosition(out);
+  }
+
   /** World-space barrel direction (write into `out` to avoid allocation).
    *  Hull yaw + turret yaw, pitched by the turret elevation. */
   barrelDir(out) {
@@ -532,6 +538,13 @@ class Tank {
     this.muzzleObj = new THREE.Object3D();
     this.muzzleObj.position.set(0, 0, -4.3);
     this.elev.add(this.muzzleObj);
+
+    // Second marker at the MG barrel tip: the MG is short enough now that its
+    // tracers and muzzle flash should read as coming from that barrel, not the
+    // main gun.
+    this.mgMuzzleObj = new THREE.Object3D();
+    this.mgMuzzleObj.position.set(0.28, -0.12, -2.0);
+    this.elev.add(this.mgMuzzleObj);
 
     // Antenna on the rear hull.
     const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.2, 6), darkMat);
