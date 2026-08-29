@@ -153,9 +153,9 @@ const EngineAudio = (() => {
     engineGain.gain.value = easeToward(engineGain.gain.value, targetGain, ENGINE_EASE, dt);
   }
 
-  /** One-shot MG report: a short filtered-noise crack plus a click.
-   *  `dist` = meters from the listener (player); distant CPU fire reads as
-   *  faint crackle. */
+  /** One-shot MG report: a short falling-bandpass noise crack plus a low
+   *  sine thump. `dist` = meters from the listener (player); distant CPU
+   *  fire reads as faint crackle. */
   function mgFire(dist) {
     if (!started) return;
     const t0 = ctx.currentTime;
@@ -178,18 +178,18 @@ const EngineAudio = (() => {
     noise.start(t0);
     noise.stop(t0 + 0.15);
 
-    // --- click: short high sine blip ------------------------------------------
+    // --- thump: low sine with a fast pitch drop ------------------------------
     const osc = ctx.createOscillator();
     osc.type = "sine";
-    osc.frequency.setValueAtTime(2200, t0);
-    osc.frequency.exponentialRampToValueAtTime(900, t0 + 0.04);
+    osc.frequency.setValueAtTime(140, t0);
+    osc.frequency.exponentialRampToValueAtTime(45, t0 + 0.09);
     const g = ctx.createGain();
-    g.gain.setValueAtTime(0.15 * vol, t0);
-    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.05);
+    g.gain.setValueAtTime(0.6 * vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.12);
     osc.connect(g);
     g.connect(sfxGain);
     osc.start(t0);
-    osc.stop(t0 + 0.06);
+    osc.stop(t0 + 0.15);
   }
 
   /** One-shot shell launch: a low thump (sine sweep ~120->40 Hz) plus a
@@ -308,6 +308,43 @@ const EngineAudio = (() => {
     osc.stop(t0 + 0.65);
   }
 
+  /** One-shot felled-tree thud: a low sine thump plus a short lowpassed
+   *  noise crunch. `dist` = meters from the listener (player). */
+  function treeThud(dist) {
+    if (!started) return;
+    const t0 = ctx.currentTime;
+    const vol = clamp(1.2 / (1 + dist / 100), 0.08, 1);
+
+    // --- thump: low sine with a fast pitch drop --------------------------------
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(100, t0);
+    osc.frequency.exponentialRampToValueAtTime(35, t0 + 0.2);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.5 * vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.25);
+    osc.connect(g);
+    g.connect(sfxGain);
+    osc.start(t0);
+    osc.stop(t0 + 0.3);
+
+    // --- crunch: short noise burst through a falling lowpass -------------------
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuf;
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.setValueAtTime(600, t0);
+    lp.frequency.exponentialRampToValueAtTime(120, t0 + 0.2);
+    const gn = ctx.createGain();
+    gn.gain.setValueAtTime(0.35 * vol, t0);
+    gn.gain.exponentialRampToValueAtTime(0.001, t0 + 0.25);
+    noise.connect(lp);
+    lp.connect(gn);
+    gn.connect(sfxGain);
+    noise.start(t0);
+    noise.stop(t0 + 0.3);
+  }
+
   /** One-shot warning beep (overheat): a short high-pitched blip. */
   function warnBeep() {
     if (!started) return;
@@ -377,6 +414,7 @@ const EngineAudio = (() => {
     mgFire,
     shellLaunch,
     shellBoom,
+    treeThud,
     warnBeep,
     context,
     masterGain,

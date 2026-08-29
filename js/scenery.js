@@ -81,6 +81,16 @@ class Scenery {
     return item;
   }
 
+  /** Remove one item (e.g. a felled tree). The mesh is unparented from the
+   *  scene; shared geometry/materials are NOT disposed (other items reuse
+   *  them). Re-adding the same item restores it. */
+  remove(item) {
+    const i = this.items.indexOf(item);
+    if (i === -1) return;
+    this.items.splice(i, 1);
+    if (item.mesh) this.scene.remove(item.mesh);
+  }
+
   /** Remove everything (used when a new map is generated). */
   reset() {
     for (const it of this.items) {

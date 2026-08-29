@@ -114,6 +114,9 @@ const Game = (() => {
   const OBSTACLE_SPEED_MIN = 3; // m/s impact speed; faster chips HP
   const OBSTACLE_DMG = 2; // HP chipped on a hard impact with a tree/rock
   const OBSTACLE_COOLDOWN = 0.5; // s per obstacle before damage may apply again
+  const TREE_FELL_SPEED = 12; // m/s; at/above this a tree in the way is felled
+  const TREE_FELL_SPEED_CUT = 0.3; // fraction of speed lost plowing through
+  const CAM_SHAKE_FELL = 0.15; // camera shake when the player fells a tree
 
   // --- Title-screen camera ---------------------------------------------------
   const ORBIT_RADIUS = 60; // m from the map center
@@ -357,6 +360,7 @@ const Game = (() => {
   let kills = 0;
   let damageDealt = 0; // total HP the player has dealt (score)
   let fleet = []; // M4: [{ tank, ai, respawnTimer }]
+  const felledTrees = []; // trees felled this run (restored on restart)
   // Scoreboard tallies for AI shooters: keyed by the Tank object, which
   // persists across respawns (the same object is reset, not rebuilt).
   const shooterStats = new Map(); // Tank -> { kills, damage }
@@ -661,6 +665,13 @@ const Game = (() => {
     }
   }
 
+  /** Re-add the trees felled this run (restart keeps the same map, so the
+   *  vegetation comes back). */
+  function restoreFelledTrees() {
+    for (const item of felledTrees) scenery.add(item);
+    felledTrees.length = 0;
+  }
+
   /** The player was destroyed: hide the tank, debris burst + big smoke +
    *  boom, shake, delayed overlay with the reason, distance, kills, score
    *  and the full scoreboard. */
@@ -836,13 +847,33 @@ const Game = (() => {
 
   /** Tank vs obstacle: if the tank's new position overlaps a tree/rock,
    *  cancel the movement step (the tank stops at the obstacle) and chip a
-   *  little HP on a hard impact (per-obstacle cooldown). */
+   *  little HP on a hard impact (per-obstacle cooldown). A hard impact
+   *  (>= TREE_FELL_SPEED) fells any trees in the way: the tank plows
+   *  through them (with a speed cut), while rocks still stop it. */
   function blockObstacle(t, prev) {
     const hit = scenery.overlapping(t.position, COLLIDE_RADIUS, _obHits);
     if (!hit.length) return;
     const impact = Math.abs(t.speed);
-    t.position.copy(prev); // cancel the step: stop at the obstacle
-    t.speed = 0;
+    // Hard impact: fell any trees in the way (rocks stay solid).
+    const felled = [];
+    if (impact >= TREE_FELL_SPEED) {
+      for (let i = hit.length - 1; i >= 0; i--) {
+        if (hit[i].kind !== "tree") continue;
+        scenery.remove(hit[i]);
+        felled.push(hit[i]);
+        hit.length = i; // drop the felled tree from the hit list
+      }
+    }
+    if (felled.length) {
+      if (t === tank) chaseCam.shake = Math.max(chaseCam.shake, CAM_SHAKE_FELL);
+      EngineAudio.treeThud(t.position.distanceTo(tank.position));
+      // Only felled trees in the way: plow through with a speed cut.
+      if (!hit.length) t.speed *= 1 - TREE_FELL_SPEED_CUT;
+    }
+    if (hit.length) {
+      t.position.copy(prev); // still blocked (by a rock): stop at the obstacle
+      t.speed = 0;
+    }
     t.group.position.copy(t.position);
     if (impact <= OBSTACLE_SPEED_MIN) return;
     t._obCd = t._obCd || new Map();
@@ -852,10 +883,15 @@ const Game = (() => {
       if (cd === undefined || cd <= 0) canChip = true;
       t._obCd.set(item, OBSTACLE_COOLDOWN);
     }
+    for (const item of felled) {
+      const cd = t._obCd.get(item);
+      if (cd === undefined || cd <= 0) canChip = true;
+      t._obCd.set(item, OBSTACLE_COOLDOWN);
+    }
     if (!canChip) return;
     const killed = t.takeDamage(OBSTACLE_DMG);
     if (killed && t === tank) {
-      destroyReason = "You crashed into a " + (hit[0].kind === "rock" ? "rock" : "tree") + ".";
+      destroyReason = "You crashed into a " + (hit.length ? hit[0] : felled[0]).kind + ".";
     }
   }
 
@@ -1095,6 +1131,7 @@ const Game = (() => {
     Music.newFlight();
     spawnPlayerTank();
     respawnFleet();
+    restoreFelledTrees();
     Input.lockPointer();
   }
 
@@ -1333,7 +1370,6 @@ const Game = (() => {
           flashes.flash(_muzzle);
           EngineAudio.shellLaunch(0);
           chaseCam.shake = Math.max(chaseCam.shake, CAM_SHAKE_FIRE);
-          addMessage("Shell away!");
         }
       }
 
