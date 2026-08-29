@@ -40,6 +40,7 @@ class Tracers {
         vel: new THREE.Vector3(),
         dir: new THREE.Vector3(),
         damage: 0,
+        kind: "soft",
         team: "",
         owner: null,
         life: 0,
@@ -51,8 +52,9 @@ class Tracers {
     this.onDamage = null;
   }
 
-  /** Activate one pooled tracer. Drops the shot if the pool is full. */
-  fire(owner, muzzleWorld, dir, damage) {
+  /** Activate one pooled tracer. Drops the shot if the pool is full.
+   *  `kind` is the damage kind ("soft" for MG fire). */
+  fire(owner, muzzleWorld, dir, damage, kind = "soft") {
     for (let i = 0; i < this.pool.length; i++) {
       const e = this.pool[(this._nextFree + i) % this.pool.length];
       if (e.active) continue;
@@ -65,6 +67,7 @@ class Tracers {
       // Tracers inherit the shooter's motion.
       e.vel.copy(owner.velocity).addScaledVector(e.dir, MG_BULLET_SPEED);
       e.damage = damage;
+      e.kind = kind;
       e.life = MG_BULLET_LIFE;
       e.mesh.visible = true;
       e.mesh.position.copy(e.pos);
@@ -89,10 +92,9 @@ class Tracers {
         if (!t.alive || t.team === e.team) continue;
         _center.set(t.position.x, t.position.y + TANK_CENTER_HEIGHT, t.position.z);
         if (e.pos.distanceTo(_center) < MG_HIT_RADIUS) {
-          const hpBefore = t.hp;
-          const killed = t.takeDamage(e.damage);
-          if (this.onDamage) this.onDamage(e.owner, t, Math.min(e.damage, hpBefore));
-          if (killed && this.onKill) this.onKill(e.owner, t);
+          const dealt = t.takeDamage(e.damage, e.kind);
+          if (dealt > 0 && this.onDamage) this.onDamage(e.owner, t, dealt);
+          if (dealt > 0 && t.hp <= 0 && this.onKill) this.onKill(e.owner, t);
           hit = true;
           break;
         }
@@ -123,8 +125,11 @@ const SHELL_LIFE = 8; // s fuse
 const SHELL_GRAVITY = 9.8; // m/s^2 (arcs the shell)
 const SHELL_FUSE_RADIUS = 5; // m; proximity stand-off that triggers detonation
 const BLAST_RADIUS = 12; // m; splash damage radius
-const SHELL_DAMAGE = 60; // HP at the blast center
-const SHELL_DAMAGE_MIN = 15; // HP at the blast edge
+// HARD damage (main gun). Boosted 1.25x over the pre-armor values (60/15);
+// a tank's TANK_HARD_ARMOR (1.25) cancels it, so a tank still takes 60 at
+// the blast center and 15 at the edge.
+const SHELL_DAMAGE = 75; // HP at the blast center
+const SHELL_DAMAGE_MIN = 18.75; // HP at the blast edge
 const SHELL_POOL_SIZE = 32; // pooled shells (player + CPU volleys in flight)
 
 /**
@@ -217,11 +222,10 @@ class Shells {
       const d = e.pos.distanceTo(_center);
       if (d > BLAST_RADIUS) continue;
       const tFall = 1 - d / BLAST_RADIUS; // 1 at center -> 0 at edge
-      const dealt = Math.round(lerp(SHELL_DAMAGE_MIN, SHELL_DAMAGE, smoothstep(tFall)));
-      const hpBefore = t.hp;
-      const killed = t.takeDamage(dealt);
-      if (this.onDamage) this.onDamage(e.owner, t, Math.min(dealt, hpBefore));
-      if (killed && this.onKill) this.onKill(e.owner, t);
+      const raw = Math.round(lerp(SHELL_DAMAGE_MIN, SHELL_DAMAGE, smoothstep(tFall)));
+      const dealt = t.takeDamage(raw, "hard");
+      if (dealt > 0 && this.onDamage) this.onDamage(e.owner, t, dealt);
+      if (dealt > 0 && t.hp <= 0 && this.onKill) this.onKill(e.owner, t);
       hitCount++;
     }
     if (onBoom) onBoom(e.pos, hitCount);

@@ -48,7 +48,9 @@ const Game = (() => {
 
   // --- Combat (M3) -----------------------------------------------------------
   const MG_FIRE_INTERVAL = 0.08; // s between player MG shots
-  const MG_DAMAGE_PLAYER = 3; // damage per player tracer
+  // SOFT damage (small arms). Boosted 10x over the pre-armor value (3); a
+  // tank's TANK_SOFT_ARMOR (10) cancels it, so a tank still takes 3 per hit.
+  const MG_DAMAGE_PLAYER = 30; // raw damage per player tracer
   const GUN_HEAT_PER_SHOT = 1; // % heat per shot; 100 shots = overheat
   const GUN_COOL_RATE = 10; // %/s while not firing
   const GUN_MAX_TEMP = 100; // overheat: no fire until the gun cools back to 0
@@ -58,7 +60,9 @@ const Game = (() => {
 
   // --- AI fleet (M4) ---------------------------------------------------------
   const CPU_RESPAWN_DELAY = 3; // s before a destroyed CPU reappears
-  const MG_DAMAGE_AI = 2; // damage per AI tracer
+  // SOFT damage (small arms). Boosted 10x over the pre-armor value (2); a
+  // tank's TANK_SOFT_ARMOR (10) cancels it, so a tank still takes 2 per hit.
+  const MG_DAMAGE_AI = 20; // raw damage per AI tracer
   const CAM_SHAKE_DESTROYED = 1.6; // camera shake when the player is destroyed
   const OVERLAY_DELAY = 0.8; // s the destruction registers before the panel appears
   // Damage smoke: a tank at or below these HP ratios trails smoke (checked
@@ -896,8 +900,8 @@ const Game = (() => {
       t._obCd.set(item, OBSTACLE_COOLDOWN);
     }
     if (!canChip) return;
-    const killed = t.takeDamage(OBSTACLE_DMG);
-    if (killed && t === tank) {
+    // No kind: unarmored physical damage (armor does not stop a collision).
+    if (t.takeDamage(OBSTACLE_DMG) > 0 && t.hp <= 0 && t === tank) {
       destroyReason = "You crashed into a " + (hit.length ? hit[0] : felled[0]).kind + ".";
     }
   }
@@ -936,26 +940,25 @@ const Game = (() => {
         );
         const dmg = Math.max(0, (rel - TANK_RAM_SPEED_MIN) * TANK_RAM_DMG_PER);
         if (dmg <= 0) continue;
-        const dealt = Math.round(dmg);
+        const raw = Math.round(dmg);
         a._ramCd = a._ramCd || new Map();
         b._ramCd = b._ramCd || new Map();
         const cd = a._ramCd.get(b);
         if (cd !== undefined && cd > 0) continue;
         a._ramCd.set(b, TANK_RAM_COOLDOWN);
         b._ramCd.set(a, TANK_RAM_COOLDOWN);
-        const toA = Math.min(dealt, a.hp);
-        const toB = Math.min(dealt, b.hp);
-        const killedA = a.takeDamage(dealt);
-        const killedB = b.takeDamage(dealt);
-        recordDamage(b, a, toA);
-        recordDamage(a, b, toB);
-        if (killedA && a === tank) destroyReason = "You were rammed.";
-        if (killedB && b === tank) destroyReason = "You were rammed.";
-        if (killedA) {
+        // No kind: unarmored physical damage (armor does not stop a collision).
+        const dealtA = a.takeDamage(raw);
+        const dealtB = b.takeDamage(raw);
+        if (dealtA > 0) recordDamage(b, a, dealtA);
+        if (dealtB > 0) recordDamage(a, b, dealtB);
+        if (dealtA > 0 && a.hp <= 0 && a === tank) destroyReason = "You were rammed.";
+        if (dealtB > 0 && b.hp <= 0 && b === tank) destroyReason = "You were rammed.";
+        if (dealtA > 0 && a.hp <= 0) {
           const slot = fleet.find((s) => s.tank === a);
           if (slot) destroyAiTank(slot, b);
         }
-        if (killedB) {
+        if (dealtB > 0 && b.hp <= 0) {
           const slot = fleet.find((s) => s.tank === b);
           if (slot) destroyAiTank(slot, a);
         }

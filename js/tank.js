@@ -21,6 +21,14 @@
 // ---------------------------------------------------------------------------
 
 const TANK_HP = 100; // player and CPU
+// Armor: a multiplier dividing incoming damage of the matching kind
+// (effective = raw / armor, floored). SOFT damage is small-arms/MG fire,
+// HARD damage is main-gun fire. The weapons' raw values are boosted by the
+// same factors, so a tank's effective damage taken is exactly what it was
+// before armor existed; future units tune their own levels (infantry ~1,
+// bunkers much higher).
+const TANK_SOFT_ARMOR = 10; // vs SOFT damage (MG / small arms)
+const TANK_HARD_ARMOR = 1.25; // vs HARD damage (main gun)
 const HULL_LEN = 4.5; // m, along local -Z (nose)
 const HULL_WIDE = 2.6; // m
 const HULL_HEIGHT = 1.3; // m, hull top above the tracks
@@ -144,6 +152,9 @@ class Tank {
     this.alive = true;
     this.team = "player"; // "player" | "cpuN"
     this.callsign = "YOU";
+    // Armor levels (divisors for takeDamage by kind).
+    this.softArmor = TANK_SOFT_ARMOR;
+    this.hardArmor = TANK_HARD_ARMOR;
 
     // Scratch objects (avoid per-frame allocations).
     this._fwd = new THREE.Vector3();
@@ -191,16 +202,23 @@ class Tank {
     return out;
   }
 
-  /** Apply damage. Returns true if this call destroyed the tank. */
-  takeDamage(amount) {
-    if (!this.alive) return false;
-    this.hp -= amount;
+  /** Apply damage. `kind` selects the armor divisor: "soft" (small arms /
+   *  MG) or "hard" (main gun); omit it for unarmored physical damage
+   *  (collision). Returns the HP actually deducted (0 if dead or fully
+   *  soaked by armor); the tank is destroyed when that leaves hp at 0. */
+  takeDamage(amount, kind) {
+    if (!this.alive) return 0;
+    let dealt = amount;
+    if (kind === "soft") dealt = amount / this.softArmor;
+    else if (kind === "hard") dealt = amount / this.hardArmor;
+    dealt = Math.floor(dealt);
+    if (dealt <= 0) return 0;
+    this.hp -= dealt;
     if (this.hp <= 0) {
       this.hp = 0;
       this.alive = false;
-      return true;
     }
-    return false;
+    return dealt;
   }
 
   /** Place the tank at (x, z) facing `yaw`; y is computed from the terrain. */
