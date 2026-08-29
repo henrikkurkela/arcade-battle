@@ -42,6 +42,85 @@ const CORNER_X = 1.3; // m, hull corner offset (left/right)
 const CORNER_Z = 1.9; // m, hull corner offset (front/rear)
 const SLOPE_AHEAD = 3; // m, how far ahead to sample the climb limit
 
+// Track assembly dimensions (used by _buildModel and the tread animation).
+const WHEEL_TOP = 0.56; // common top plane of all wheels
+const R_BIG = 0.28; // road wheel radius
+const R_SMALL = 0.22; // sprocket/idler radius
+const TRACK_W = 0.62; // track width (extrusion depth)
+const BAND = 0.09; // track band thickness
+const TRACK_DROP = 0.5; // assembly lowered so the track bottom (not the
+                        // hull bottom, at y=-0.15) is the tank's lowest
+                        // point, resting on the ground (y=-TRACK_H)
+const WHEEL_Z = [-2.0, -1.2, -0.4, 0.4, 1.2, 2.0];
+
+// Track band loop path, for the crawling tread links. The band is a stadium:
+// bottom run at y=0 from z=-TRACK_END_Z to +TRACK_END_Z, end arcs of radius
+// TRACK_R_OUT centered at (±TRACK_END_Z, TRACK_R_OUT), top run at
+// y=2*TRACK_R_OUT. `s` runs the way treads flow when driving forward (bottom
+// run toward +z). Heights are band-midline values, before the -TRACK_DROP
+// shift applied in _buildModel.
+const TRACK_END_Z = WHEEL_Z[WHEEL_Z.length - 1]; // 2.0
+const TRACK_R_OUT = WHEEL_TOP - R_SMALL; // 0.34, end-arc (outer) radius
+const TRACK_R_MID = TRACK_R_OUT - BAND / 2; // band midline radius on arcs
+const TRACK_RUN_LEN = 2 * TRACK_END_Z; // 4.0
+const TRACK_ARC_LEN = Math.PI * TRACK_R_OUT;
+const TRACK_LOOP_LEN = 2 * TRACK_RUN_LEN + 2 * TRACK_ARC_LEN;
+const TRACK_LINKS_PER_SIDE = 32;
+const _trackPt = { z: 0, y: 0, rotX: 0 }; // scratch, no per-frame allocation
+
+/** Write the band-midline point at arc length `s` (0..TRACK_LOOP_LEN) into
+ *  `out` = { z, y, rotX }; rotX aligns a box's local +Z with the tread flow. */
+function trackPointAt(s, out) {
+  if (s < TRACK_RUN_LEN) {
+    out.z = -TRACK_END_Z + s;
+    out.y = BAND / 2;
+    out.rotX = 0;
+  } else if (s < TRACK_RUN_LEN + TRACK_ARC_LEN) {
+    const a = -Math.PI / 2 + (s - TRACK_RUN_LEN) / TRACK_R_OUT;
+    out.z = TRACK_END_Z + TRACK_R_MID * Math.cos(a);
+    out.y = TRACK_R_OUT + TRACK_R_MID * Math.sin(a);
+    out.rotX = Math.atan2(-Math.cos(a), -Math.sin(a));
+  } else if (s < 2 * TRACK_RUN_LEN + TRACK_ARC_LEN) {
+    out.z = TRACK_END_Z - (s - TRACK_RUN_LEN - TRACK_ARC_LEN);
+    out.y = 2 * TRACK_R_OUT - BAND / 2;
+    out.rotX = Math.PI;
+  } else {
+    const a = Math.PI / 2 + (s - 2 * TRACK_RUN_LEN - TRACK_ARC_LEN) / TRACK_R_OUT;
+    out.z = -TRACK_END_Z + TRACK_R_MID * Math.cos(a);
+    out.y = TRACK_R_OUT + TRACK_R_MID * Math.sin(a);
+    out.rotX = Math.atan2(-Math.cos(a), -Math.sin(a));
+  }
+  return out;
+}
+
+/** Small radial bolt pattern for the wheel faces, so wheel spin is visible.
+ *  Maps onto the cylinder cap UVs (circle centered in the unit square). */
+function makeWheelCapTexture() {
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#1e2022";
+  ctx.fillRect(0, 0, 128, 128);
+  ctx.strokeStyle = "#2b2e31";
+  ctx.lineWidth = 12;
+  ctx.beginPath();
+  ctx.arc(64, 64, 50, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = "#33373b";
+  ctx.beginPath();
+  ctx.arc(64, 64, 15, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#4b5054";
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.arc(64 + Math.cos(a) * 32, 64 + Math.sin(a) * 32, 5.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  return new THREE.CanvasTexture(c);
+}
+const WHEEL_CAP_TEX = makeWheelCapTexture();
+
 /** Exponential ease toward a target (frame-rate independent). */
 function easeToward(current, target, rate, dt) {
   const t = 1 - Math.exp(-rate * dt);
@@ -71,6 +150,11 @@ class Tank {
     this._turretFwd = new THREE.Vector3();
     this._ahead = new THREE.Vector3();
     this._muzzleWorld = new THREE.Vector3();
+
+    // Track/wheel animation state (filled by _buildModel).
+    this._links = [];
+    this._wheels = [];
+    this._trackPhase = 0; // m along the track loop
 
     this.group = this._buildModel(opts.livery ?? 0x8a8f94);
     scene.add(this.group);
@@ -206,6 +290,7 @@ class Tank {
       TURRET_PITCH_MAX
     );
 
+    this._updateTracks(dt);
     this._syncGroup();
   }
 
@@ -214,6 +299,25 @@ class Tank {
     this.group.rotation.set(this.hullPitch, this.yaw, this.hullRoll, "YXZ");
     this.turret.rotation.y = this.turretYaw;
     this.elev.rotation.x = this.turretPitch;
+  }
+
+  /** Spin the wheels and crawl the tread links with the current speed.
+   *  Forward (+speed, motion along -Z) drives the wheels so their bottom
+   *  runs toward +Z, and the treads flow the same way around the loop. */
+  _updateTracks(dt) {
+    for (const w of this._wheels) w.mesh.rotation.x -= (this.speed / w.r) * dt;
+    let phase = (this._trackPhase + this.speed * dt) % TRACK_LOOP_LEN;
+    if (phase < 0) phase += TRACK_LOOP_LEN;
+    this._trackPhase = phase;
+    const spacing = TRACK_LOOP_LEN / TRACK_LINKS_PER_SIDE;
+    for (let i = 0; i < this._links.length; i++) {
+      let s = (phase + i * spacing) % TRACK_LOOP_LEN;
+      if (s < 0) s += TRACK_LOOP_LEN;
+      trackPointAt(s, _trackPt);
+      const link = this._links[i];
+      link.position.set(link.userData.cx, _trackPt.y - TRACK_DROP, _trackPt.z);
+      link.rotation.x = _trackPt.rotX;
+    }
   }
 
   _buildModel(livery) {
@@ -270,19 +374,11 @@ class Tank {
     }
 
     // Tracks: an extruded loop wrapping the wheel line, one per side, with six
-    // wheels inside (static). The first and last wheels (drive sprocket /
-    // idler) are smaller than the four road wheels; every wheel's topmost
-    // point lies on the same plane (WHEEL_TOP), so the track's bottom run
-    // sags at the road wheels and rises around the smaller end wheels.
-    const WHEEL_TOP = 0.56; // common top plane of all wheels
-    const R_BIG = 0.28; // road wheel radius
-    const R_SMALL = 0.22; // sprocket/idler radius
-    const TRACK_W = 0.62; // track width (extrusion depth)
-    const BAND = 0.09; // track band thickness
-    const TRACK_DROP = 0.5; // assembly lowered so the track bottom (not the
-                             // hull bottom, at y=-0.15) is the tank's lowest
-                             // point, resting on the ground (y=-TRACK_H)
-    const WHEEL_Z = [-2.0, -1.2, -0.4, 0.4, 1.2, 2.0];
+    // wheels inside (spun by _updateTracks). The first and last wheels (drive
+    // sprocket / idler) are smaller than the four road wheels; every wheel's
+    // topmost point lies on the same plane (WHEEL_TOP), so the track's bottom
+    // run sags at the road wheels and rises around the smaller end wheels.
+    const capMat = new THREE.MeshLambertMaterial({ map: WHEEL_CAP_TEX });
     const bigGeo = new THREE.CylinderGeometry(R_BIG, R_BIG, 0.5, 12).rotateZ(Math.PI / 2);
     const smallGeo = new THREE.CylinderGeometry(R_SMALL, R_SMALL, 0.5, 12).rotateZ(Math.PI / 2);
     for (const side of [1, -1]) {
@@ -290,9 +386,11 @@ class Tank {
       for (let i = 0; i < WHEEL_Z.length; i++) {
         const end = i === 0 || i === WHEEL_Z.length - 1;
         const r = end ? R_SMALL : R_BIG;
-        const wheel = new THREE.Mesh(end ? smallGeo : bigGeo, wheelMat);
+        // [side, cap, cap]: the bolted cap texture makes the spin visible.
+        const wheel = new THREE.Mesh(end ? smallGeo : bigGeo, [wheelMat, capMat, capMat]);
         wheel.position.set(cx, WHEEL_TOP - r - TRACK_DROP, WHEEL_Z[i]);
         g.add(wheel);
+        this._wheels.push({ mesh: wheel, r });
       }
       // Track loop: a stadium outline (bottom run at y=0, top run tangent to
       // the end-wheel wrap arcs) with a stadium hole offset in by BAND, so the
@@ -325,6 +423,21 @@ class Tank {
       track.position.set(cx, -TRACK_DROP, 0);
       g.add(track);
     }
+
+    // Tread links: small plates riding on the band, repositioned each frame
+    // by _updateTracks so the tracks visibly crawl with speed.
+    const linkGeo = new THREE.BoxGeometry(TRACK_W + 0.03, BAND + 0.06, 0.16);
+    const treadMat = new THREE.MeshLambertMaterial({ color: 0x212426 });
+    for (const side of [1, -1]) {
+      const cx = side * (HULL_WIDE / 2 + 0.28);
+      for (let i = 0; i < TRACK_LINKS_PER_SIDE; i++) {
+        const link = new THREE.Mesh(linkGeo, treadMat);
+        link.userData.cx = cx;
+        g.add(link);
+        this._links.push(link);
+      }
+    }
+    this._updateTracks(0); // seat the links before the first update()
 
     // Turret (yaws) -> elevation (pitches) -> barrel.
     this.turret = new THREE.Group();
