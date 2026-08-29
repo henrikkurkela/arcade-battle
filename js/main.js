@@ -1383,7 +1383,8 @@ const Game = (() => {
   // size scaling with speed and an extra burst on hard turns.
   function emitDust(t, dt, steer) {
     if (!t.alive) return;
-    const speed = Math.abs(t.speed);
+    // Track speed (not hull speed) so spinning-in-place treads still kick up.
+    const speed = Math.abs(t.trackSpeed);
     if (speed <= DUST_SPEED_MIN) return;
     const rate = clamp(speed / MAX_SPEED_FWD, 0, 1);
     t._dustTimer = (t._dustTimer || 0) + dt;

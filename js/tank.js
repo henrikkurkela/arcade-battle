@@ -14,8 +14,10 @@
 //  - Steering scales with speed (the hull can't pivot in place, but still
 //    turns slowly at a crawl) and inverts while reversing.
 //  - The hull follows the terrain: y from the four hull corners, pitch/roll
-//    eased to avoid jitter. Slopes steeper than SLOPE_LIMIT kill forward
-//    motion (you can still reverse back down).
+//    eased to avoid jitter.
+//  - Traction falls off on climbs: the steeper the slope, the less top speed
+//    and acceleration, until the tracks spin in place at SLOPE_TAN. Descents
+//    are faster (capped), and gravity bleeds/boosts speed along the slope.
 //  - The turret is mouse-driven (pointer lock): yaw is free 360 deg, pitch is
 //    clamped between TURRET_PITCH_MIN and TURRET_PITCH_MAX.
 // ---------------------------------------------------------------------------
@@ -34,21 +36,27 @@ const HULL_WIDE = 2.6; // m
 const HULL_HEIGHT = 1.3; // m, hull top above the tracks
 const TRACK_H = 0.5; // m, hull center height above the ground
 const COLLIDE_RADIUS = 2.6; // m, horizontal (tank-tank and tank-obstacle, M5)
-const MAX_SPEED_FWD = 20; // m/s (~72 km/h)
+const MAX_SPEED_FWD = 20; // m/s (~72 km/h), the flat-ground base value
 const MAX_SPEED_REV = 8; // m/s
 const ACCEL = 8; // m/s^2
 const BRAKE_DECEL = 14; // m/s^2
 const COAST_DECEL = 3; // m/s^2
 const TURN_RATE = 1.4; // rad/s at full speed (scales with speed, see below)
-const SLOPE_LIMIT = THREE.MathUtils.degToRad(35); // cannot climb steeper
+// Traction model: SLOPE_TAN is the gradient at which grip runs out (tracks
+// spin in place). Below it, traction (and with it top speed and acceleration)
+// falls off quadratically, so gentle hills barely register.
+const SLOPE_LIMIT = THREE.MathUtils.degToRad(35); // spin-out gradient
 const SLOPE_TAN = Math.tan(SLOPE_LIMIT); // ~0.70
+const GRAV = 6; // m/s^2, arcade slope gravity while coasting
+const DOWNHILL_BOOST = 0.3; // extra top-speed fraction on steep descents
+const SLIP_SPIN = 10; // m/s of track spin at full slip (spinning-in-place)
 const TURRET_PITCH_MIN = THREE.MathUtils.degToRad(-10);
 const TURRET_PITCH_MAX = THREE.MathUtils.degToRad(30);
 const MOUSE_SENS = 0.0022; // rad/px (player turret)
 const HULL_EASE = 8; // pitch/roll easing rate (per second)
 const CORNER_X = 1.3; // m, hull corner offset (left/right)
 const CORNER_Z = 1.9; // m, hull corner offset (front/rear)
-const SLOPE_AHEAD = 3; // m, how far ahead to sample the climb limit
+const SLOPE_AHEAD = 3; // m, how far ahead to sample the slope
 
 // Track assembly dimensions (used by _buildModel and the tread animation).
 const WHEEL_TOP = 0.56; // common top plane of all wheels
@@ -141,6 +149,7 @@ class Tank {
     this.position = new THREE.Vector3(0, 0, 0);
     this.velocity = new THREE.Vector3(); // 2D motion (x, z); y stays 0
     this.speed = 0; // signed scalar: + forward, - reverse
+    this.trackSpeed = 0; // speed the treads actually spin at (includes slip)
     this.yaw = 0;
     this.turretYaw = 0;
     this.turretPitch = 0;
@@ -248,29 +257,42 @@ class Tank {
     const steerIn = clamp(control.steer, -1, 1);
     const brake = control.brake ? 1 : 0;
 
-    // Longitudinal: throttle accelerates, brake decelerates hard, coast bleeds.
+    // Slope along the direction of travel (positive = climbing). When
+    // (nearly) stationary, sample along the way the throttle is about to
+    // push: nose for forward, tail for reverse.
+    const dir = this.speed > 0 ? 1 : this.speed < 0 ? -1 : throttleIn >= 0 ? 1 : -1;
+    this._ahead.copy(this.position).addScaledVector(this.forward, SLOPE_AHEAD * dir);
+    const slopeAlong =
+      (terrain.heightAt(this._ahead.x, this._ahead.z) -
+        terrain.heightAt(this.position.x, this.position.z)) /
+      (SLOPE_AHEAD * dir);
+
+    // Traction: full on flat/downhill, falling quadratically to zero at
+    // SLOPE_TAN (the tracks spin in place). Steep descents raise the cap.
+    const climb = Math.max(0, slopeAlong);
+    const t = clamp(1 - (climb / SLOPE_TAN) * (climb / SLOPE_TAN), 0, 1);
+    const maxFwd =
+      MAX_SPEED_FWD * (t + Math.max(0, -slopeAlong) * DOWNHILL_BOOST / SLOPE_TAN);
+
+    // Longitudinal: throttle scaled by traction, coasting feels the slope
+    // (gravity bleeds uphill, boosts downhill), brake decelerates hard.
+    const sign = this.speed > 0 ? 1 : this.speed < 0 ? -1 : 0;
     if (brake) {
-      if (this.speed > 0) this.speed = Math.max(0, this.speed - BRAKE_DECEL * dt);
-      else if (this.speed < 0) this.speed = Math.min(0, this.speed + BRAKE_DECEL * dt);
+      this.speed = this.speed > 0
+        ? Math.max(0, this.speed - BRAKE_DECEL * dt)
+        : Math.min(0, this.speed + BRAKE_DECEL * dt);
     } else if (throttleIn > 0) {
-      this.speed = Math.min(MAX_SPEED_FWD, this.speed + ACCEL * throttleIn * dt);
+      this.speed = Math.min(maxFwd, this.speed + ACCEL * throttleIn * t * dt);
     } else if (throttleIn < 0) {
-      this.speed = Math.max(-MAX_SPEED_REV, this.speed + ACCEL * throttleIn * dt);
+      this.speed = Math.max(-MAX_SPEED_REV, this.speed + ACCEL * throttleIn * t * dt);
     } else {
-      if (this.speed > 0) this.speed = Math.max(0, this.speed - COAST_DECEL * dt);
-      else if (this.speed < 0) this.speed = Math.min(0, this.speed + COAST_DECEL * dt);
+      const accel = -sign * (GRAV * slopeAlong + COAST_DECEL);
+      this.speed = clamp(this.speed + accel * dt, -MAX_SPEED_REV, maxFwd);
     }
 
-    // Slope limit: ground steeper than SLOPE_LIMIT directly ahead kills forward
-    // motion (the tank can still reverse back downhill).
-    if (this.speed > 0) {
-      this._ahead.copy(this.position).addScaledVector(this.forward, SLOPE_AHEAD);
-      const slopeUp =
-        (terrain.heightAt(this._ahead.x, this._ahead.z) -
-          terrain.heightAt(this.position.x, this.position.z)) /
-        SLOPE_AHEAD;
-      if (slopeUp > SLOPE_TAN) this.speed = 0;
-    }
+    // Track slip: with lost traction the treads spin faster than the hull
+    // moves — the "spinning in place" read (also feeds the dust puffs).
+    this.trackSpeed = this.speed + throttleIn * (1 - t) * SLIP_SPIN;
 
     // Steering: scales with speed (no in-place pivot) and inverts in reverse.
     const speedFactor = clamp(Math.abs(this.speed) / 8, 0.15, 1);
@@ -308,7 +330,7 @@ class Tank {
       TURRET_PITCH_MAX
     );
 
-    this._updateTracks(dt);
+    this._updateTracks(dt, this.trackSpeed);
     this._syncGroup();
   }
 
@@ -319,12 +341,13 @@ class Tank {
     this.elev.rotation.x = this.turretPitch;
   }
 
-  /** Spin the wheels and crawl the tread links with the current speed.
+  /** Spin the wheels and crawl the tread links at the given track speed
+   *  (includes slip, so the treads can spin while the hull stands still).
    *  Forward (+speed, motion along -Z) drives the wheels so their bottom
    *  runs toward +Z, and the treads flow the same way around the loop. */
-  _updateTracks(dt) {
-    for (const w of this._wheels) w.mesh.rotation.x -= (this.speed / w.r) * dt;
-    let phase = (this._trackPhase + this.speed * dt) % TRACK_LOOP_LEN;
+  _updateTracks(dt, speed) {
+    for (const w of this._wheels) w.mesh.rotation.x -= (speed / w.r) * dt;
+    let phase = (this._trackPhase + speed * dt) % TRACK_LOOP_LEN;
     if (phase < 0) phase += TRACK_LOOP_LEN;
     this._trackPhase = phase;
     const spacing = TRACK_LOOP_LEN / TRACK_LINKS_PER_SIDE;
@@ -455,7 +478,7 @@ class Tank {
         this._links.push(link);
       }
     }
-    this._updateTracks(0); // seat the links before the first update()
+    this._updateTracks(0, 0); // seat the links before the first update()
 
     // Turret (yaws) -> elevation (pitches) -> barrel.
     this.turret = new THREE.Group();
