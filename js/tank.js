@@ -68,6 +68,7 @@ class Tank {
 
     // Scratch objects (avoid per-frame allocations).
     this._fwd = new THREE.Vector3();
+    this._turretFwd = new THREE.Vector3();
     this._ahead = new THREE.Vector3();
     this._muzzleWorld = new THREE.Vector3();
 
@@ -80,6 +81,14 @@ class Tank {
   get forward() {
     this._fwd.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     return this._fwd;
+  }
+
+  /** Horizontal unit vector along the turret axis (hull yaw + turret yaw,
+   *  pitch ignored). Used by the chase camera to orbit with the turret. */
+  get turretForward() {
+    const a = this.yaw + this.turretYaw;
+    this._turretFwd.set(-Math.sin(a), 0, -Math.cos(a));
+    return this._turretFwd;
   }
 
   /** World-space muzzle point (write into `out` to avoid allocation). */
@@ -216,10 +225,49 @@ class Tank {
     const turretMat = new THREE.MeshLambertMaterial({ color: livery });
     const darkMat = new THREE.MeshLambertMaterial({ color: 0x3a3d40 });
 
-    // Hull.
-    const hull = new THREE.Mesh(new THREE.BoxGeometry(HULL_WIDE, HULL_HEIGHT, HULL_LEN), hullMat);
-    hull.position.y = TRACK_H;
-    g.add(hull);
+    // Hull: an extruded side profile with a pointed front — the upper glacis
+    // rakes up-and-back from the apex to the top front edge, the lower glacis
+    // rakes down-and-back to the nose bottom, so the apex is the frontmost
+    // point (side view: <==|). Built in the side-view plane (shape x = tank
+    // z, y = up) and extruded across the hull width.
+    const hTop = TRACK_H + HULL_HEIGHT / 2; // hull top (1.15)
+    const hBot = TRACK_H - HULL_HEIGHT / 2; // hull bottom (-0.15)
+    const nose = -HULL_LEN / 2; // front extent (-2.25)
+    const hullShape = new THREE.Shape();
+    hullShape.moveTo(nose + 0.4, hBot); // nose bottom
+    hullShape.lineTo(HULL_LEN / 2, hBot); // bottom rear
+    hullShape.lineTo(HULL_LEN / 2, hTop); // top rear
+    hullShape.lineTo(nose + 0.55, hTop); // top front
+    hullShape.lineTo(nose, 0.2); // apex (frontmost point)
+    hullShape.closePath();
+    const hullGeo = new THREE.ExtrudeGeometry(hullShape, {
+      depth: HULL_WIDE,
+      bevelEnabled: false,
+    });
+    hullGeo.rotateY(-Math.PI / 2); // shape x -> tank z, extrusion -> tank x
+    hullGeo.translate(HULL_WIDE / 2, 0, 0); // center the extrusion on x=0
+    g.add(new THREE.Mesh(hullGeo, hullMat));
+
+    // Driver's viewport: a small black slit on the upper glacis, tank's left
+    // side, lying flush with the raked plate (half-embedded, no z-fighting).
+    const glacisTilt = Math.atan2(0.55, hTop - 0.2); // apex->top-front tilt from vertical
+    const slit = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.07, 0.05), wheelMat);
+    slit.rotation.x = glacisTilt;
+    const dDown = 0.45; // down the plate from the top front edge
+    const dOut = 0.01; // outward along the plate normal
+    slit.position.set(
+      -0.45,
+      hTop - dDown * Math.cos(glacisTilt) + dOut * Math.sin(glacisTilt),
+      nose + 0.55 - dDown * Math.sin(glacisTilt) - dOut * Math.cos(glacisTilt)
+    );
+    g.add(slit);
+
+    // Fenders: thin plates over each track, tying the hull to the tracks.
+    for (const side of [1, -1]) {
+      const fender = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.05, 4.4), hullMat);
+      fender.position.set(side * (HULL_WIDE / 2 + 0.28), 0.5, 0);
+      g.add(fender);
+    }
 
     // Tracks: an extruded loop wrapping the wheel line, one per side, with six
     // wheels inside (static). The first and last wheels (drive sprocket /
@@ -231,6 +279,8 @@ class Tank {
     const R_SMALL = 0.22; // sprocket/idler radius
     const TRACK_W = 0.62; // track width (extrusion depth)
     const BAND = 0.09; // track band thickness
+    const TRACK_DROP = 0.2; // assembly lowered so the track bottom (not the
+                            // hull bottom, at y=-0.15) is the tank's lowest point
     const WHEEL_Z = [-2.0, -1.2, -0.4, 0.4, 1.2, 2.0];
     const bigGeo = new THREE.CylinderGeometry(R_BIG, R_BIG, 0.5, 12).rotateZ(Math.PI / 2);
     const smallGeo = new THREE.CylinderGeometry(R_SMALL, R_SMALL, 0.5, 12).rotateZ(Math.PI / 2);
@@ -240,7 +290,7 @@ class Tank {
         const end = i === 0 || i === WHEEL_Z.length - 1;
         const r = end ? R_SMALL : R_BIG;
         const wheel = new THREE.Mesh(end ? smallGeo : bigGeo, wheelMat);
-        wheel.position.set(cx, WHEEL_TOP - r, WHEEL_Z[i]);
+        wheel.position.set(cx, WHEEL_TOP - r - TRACK_DROP, WHEEL_Z[i]);
         g.add(wheel);
       }
       // Track loop: a stadium outline (bottom run at y=0, top run tangent to
@@ -271,7 +321,7 @@ class Tank {
       trackGeo.rotateY(-Math.PI / 2); // shape x -> tank z, extrusion -> tank x
       trackGeo.translate(TRACK_W / 2, 0, 0); // center the extrusion on x=0
       const track = new THREE.Mesh(trackGeo, trackMat);
-      track.position.x = cx;
+      track.position.set(cx, -TRACK_DROP, 0);
       g.add(track);
     }
 

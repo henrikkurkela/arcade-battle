@@ -1,15 +1,16 @@
 "use strict";
 
 // ---------------------------------------------------------------------------
-// Chase camera: sits behind and above the hull, follows with a little lead in
-// the direction of travel, widens the FOV at speed, and can shake (hit /
+// Chase camera: sits behind and above the TURRET axis (so swinging the turret
+// orbits the camera around the tank), follows with a little lead in the
+// direction of travel, widens the FOV at speed, and can shake (hit /
 // destruction feedback). The tank stays level-ish, so the horizon is NOT
 // banked — the camera up stays world-up.
 // ---------------------------------------------------------------------------
 
-const CAM_BACK = 12; // m behind the hull
+const CAM_BACK = 12; // m behind the turret axis
 const CAM_UP = 4.5; // m
-const CAM_LOOK_AHEAD = 6; // m ahead of the hull
+const CAM_LOOK_AHEAD = 6; // m ahead along the turret axis
 const CAM_VEL_LEAD = 0.08; // small lead in the direction of motion
 const CAM_FOV_BASE = 70;
 const CAM_FOV_KICK = 10; // added at top speed
@@ -26,7 +27,7 @@ class ChaseCamera {
 
   /** Instantly place the camera (used on spawn/restart). */
   snap(tank) {
-    const fwd = tank.forward;
+    const fwd = tank.turretForward;
     this._pos
       .copy(tank.position)
       .addScaledVector(fwd, -CAM_BACK)
@@ -38,10 +39,10 @@ class ChaseCamera {
   }
 
   update(dt, tank) {
-    const fwd = tank.forward;
+    const fwd = tank.turretForward;
     const t = 1 - Math.pow(0.0005, dt); // frame-rate independent smoothing
 
-    // Desired position: 12 m behind, 4.5 m up.
+    // Desired position: 12 m behind the turret axis, 4.5 m up.
     this._pos
       .copy(tank.position)
       .addScaledVector(fwd, -CAM_BACK)
