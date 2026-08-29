@@ -43,9 +43,12 @@ class PlayerController {
 }
 
 // --- PlanePlayerController (plane vehicle) -----------------------------------
-// Keyboard-only flight controls (ported from the Arcade Plane game; no mouse,
-// no pointer lock): W/S pitch, A/D bank, Q/E rudder, Shift/Ctrl/C throttle,
-// Space cannon, X rockets.
+// Flight controls: pointer-locked mouse (up/down = pitch, left/right = bank)
+// plus keyboard (W/S pitch, A/D bank, Q/E rudder, Shift/Ctrl/C throttle).
+// Mouse and keyboard inputs are summed and clamped, so the keyboard remains a
+// fallback if the pointer lock fails. Space/LMB fire the cannon, X/RMB rockets.
+const PLANE_MOUSE_SENS = 1 / 50; // mouse px for full control deflection
+
 class PlanePlayerController {
   constructor() {
     this.control = { pitch: 0, roll: 0, rudder: 0, throttle: 0, firing: false, rocketFiring: false };
@@ -53,18 +56,23 @@ class PlanePlayerController {
 
   update(dt, plane, ctx) {
     const c = this.control;
-    c.pitch =
+    // Mouse (pointer locked): up = pitch up, right = bank right.
+    const d = Input.consumeMouseDelta();
+    const kbPitch =
       (Input.isDown("KeyW", "ArrowUp") ? 1 : 0) -
       (Input.isDown("KeyS", "ArrowDown") ? 1 : 0);
-    c.roll =
+    const kbRoll =
       (Input.isDown("KeyA", "ArrowLeft") ? 1 : 0) -
       (Input.isDown("KeyD", "ArrowRight") ? 1 : 0);
+    c.pitch = clamp(kbPitch - d.dy * PLANE_MOUSE_SENS, -1, 1);
+    c.roll = clamp(kbRoll - d.dx * PLANE_MOUSE_SENS, -1, 1);
     c.rudder = (Input.isDown("KeyQ") ? 1 : 0) - (Input.isDown("KeyE") ? 1 : 0);
     c.throttle =
       (Input.isDown("ShiftLeft", "ShiftRight") ? 1 : 0) -
       (Input.isDown("ControlLeft", "ControlRight", "KeyC") ? 1 : 0);
-    c.firing = Input.isDown("Space");
-    c.rocketFiring = Input.isDown("KeyX");
+    // Left click (or Space) fires the cannon; right click (or X) rockets.
+    c.firing = Input.isDown("Space") || Input.isMouseDown("left");
+    c.rocketFiring = Input.isDown("KeyX") || Input.isMouseDown("right");
     return this.control;
   }
 }

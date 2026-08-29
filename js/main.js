@@ -41,9 +41,10 @@
 //
 // M9: vehicle selection (TANK / PLANE, persisted). Both player units exist in
 // the scene at all times; only the selected one is active (the other is
-// hidden and inert). The PLANE vehicle flies with keyboard controls (W/S
-// pitch, A/D bank, Q/E rudder, Shift/Ctrl/C throttle, Space cannon, X
-// rockets) under a banked chase camera, has a stall warning and limited
+// hidden and inert). The PLANE vehicle flies with a pointer-locked mouse
+// (pitch / bank) plus keyboard (W/S pitch, A/D bank, Q/E rudder, Shift/Ctrl/C
+// throttle, Space/LMB cannon, X/RMB rockets) under a banked chase camera, has
+// a stall warning and limited
 // rockets, and lands on the garage pad (its runway) to restore HP. It joins
 // the plane list, so tanks, riflemen, AA guns and CPU planes can target it.
 // ---------------------------------------------------------------------------
@@ -1752,8 +1753,8 @@ const Game = (() => {
       respawnRifleFleet(); // fresh squad at fresh points (M7)
       respawnPlaneFleet(); // fresh plane fleet at fresh points (M8)
     }
-    // The tank aims with a pointer-locked mouse; the plane is keyboard-only.
-    if (vehicle === VEHICLE_TANK) Input.lockPointer();
+    // Both vehicles are controlled with a pointer-locked mouse.
+    Input.lockPointer();
   }
 
   function pause() {
@@ -1779,7 +1780,7 @@ const Game = (() => {
       respawnRifleFleet();
       respawnPlaneFleet();
       restoreFelledTrees();
-      if (vehicle === VEHICLE_TANK) Input.lockPointer();
+      Input.lockPointer();
   }
 
   // --- Menu controls ---------------------------------------------------------

@@ -20,6 +20,11 @@ npx serve .
 
 ## Controls
 
+M, P, R and Enter/Space work in both vehicles (mute, pause, restart,
+start/restart).
+
+### Tank
+
 | Key | Action |
 | --- | --- |
 | W / ↑ | Throttle forward |
@@ -29,10 +34,18 @@ npx serve .
 | Left click / Space | Fire MG (hold to spray) |
 | Right click / X | Fire main gun shell |
 | Shift | Brake |
-| M | Mute / unmute |
-| P | Pause |
-| R | Restart (fresh tank, same map) |
-| Enter / Space | Start (title screen) or restart (after destruction) |
+
+### Plane
+
+| Input | Action |
+| --- | --- |
+| Mouse (pointer locked) | Pitch / bank (the "stick") |
+| W / ↑ , S / ↓ | Pitch (keyboard fallback) |
+| A / ← , D / → | Bank (keyboard fallback) |
+| Q / E | Rudder |
+| Shift / Ctrl or C | Throttle up / down |
+| Left click / Space | Fire cannon (hold to spray) |
+| Right click / X | Fire rockets |
 
 Slopes steeper than 35° stop the tank going up (it can still reverse back
 down). A short warning beep sounds when the OVERHEAT warning appears.
