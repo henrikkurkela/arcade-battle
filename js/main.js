@@ -861,6 +861,7 @@ const Game = (() => {
         if (hit[i].kind !== "tree") continue;
         scenery.remove(hit[i]);
         felled.push(hit[i]);
+        felledTrees.push(hit[i]); // track for restoration on restart
         hit.length = i; // drop the felled tree from the hit list
       }
     }
