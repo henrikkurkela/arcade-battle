@@ -102,6 +102,11 @@ const Game = (() => {
     0x9a7a4a: "Sand Scorpion",
   };
 
+  // --- Rifleman squad (M7) ---------------------------------------------------
+  const RIFLEMAN_COUNT = 4; // default squad size (menu allows 0-16)
+  const RIFLEMAN_MAX = 16; // max riflemen
+  const RIFLEMAN_RESPAWN_DELAY = 3; // s before a downed rifleman reappears
+
   // --- Garage base (M5) ------------------------------------------------------
   const BASE_HALF = 20; // m; the pad is 40 x 40 centered on the spawn point
   const BASE_REPAIR_RATE = 20; // HP/s while the player tank is inside (player only)
@@ -143,6 +148,11 @@ const Game = (() => {
   const cpuCountEl = document.getElementById("cpu-count");
   const cpuMinus = document.getElementById("cpu-minus");
   const cpuPlus = document.getElementById("cpu-plus");
+  const rifleControl = document.getElementById("rifle-control");
+  const rifleLabel = document.getElementById("rifle-label");
+  const rifleCountEl = document.getElementById("rifle-count");
+  const rifleMinus = document.getElementById("rifle-minus");
+  const riflePlus = document.getElementById("rifle-plus");
   const musicCountEl = document.getElementById("music-count");
   const musicMinus = document.getElementById("music-minus");
   const musicPlus = document.getElementById("music-plus");
@@ -364,6 +374,7 @@ const Game = (() => {
   let kills = 0;
   let damageDealt = 0; // total HP the player has dealt (score)
   let fleet = []; // M4: [{ tank, ai, respawnTimer }]
+  let rifleFleet = []; // M7: [{ unit, ai, respawnTimer }]
   const felledTrees = []; // trees felled this run (restored on restart)
   // Scoreboard tallies for AI shooters: keyed by the Tank object, which
   // persists across respawns (the same object is reset, not rebuilt).
@@ -422,7 +433,7 @@ const Game = (() => {
     tank.callsign = "YOU";
     chaseCam = new ChaseCamera(camera);
     playerController = new PlayerController();
-    ctx = { player: tank, tanks: [tank], terrain };
+    ctx = { player: tank, tanks: [tank], units: [tank], terrain };
     tracers = new Tracers(scene);
     shells = new Shells(scene);
     debris = new Debris(scene);
@@ -435,12 +446,18 @@ const Game = (() => {
         return; // death itself is handled via !tank.alive below
       }
       const slot = fleet.find((s) => s.tank === victim);
-      if (slot) destroyAiTank(slot, owner);
+      if (slot) {
+        destroyAiTank(slot, owner);
+        return;
+      }
+      const rslot = rifleFleet.find((s) => s.unit === victim);
+      if (rslot) destroyRifleman(rslot, owner);
     };
     tracers.onDamage = shells.onDamage = recordDamage;
     spawnPlayerTank();
-    // Apply the persisted enemy count (the player tank must exist first).
+    // Apply the persisted counts (the player tank must exist first).
     setCpuCount(cpuCount);
+    setRiflemanCount(riflemanCount);
   }
 
   /** Concrete pad with a yellow hazard border and painted "GARAGE" text,
@@ -667,6 +684,120 @@ const Game = (() => {
     for (const slot of fleet) {
       slot.respawnTimer = 0;
       respawnAiTank(slot);
+    }
+  }
+
+  // --- Rifleman squad (M7) ---------------------------------------------------
+  /** Spawn a rifleman 400-800 m from the player, facing it (walks in on foot). */
+  function spawnRifleman() {
+    const p = findAiSpawn();
+    const u = new Rifleman(scene, { uniform: RIFLEMAN_UNIFORMS[rifleFleet.length % RIFLEMAN_UNIFORMS.length] });
+    u.callsign = "RIFLEMAN " + (rifleFleet.length + 1);
+    // Body front (-sin(yaw), 0, -cos(yaw)) should point at the player.
+    const yaw = Math.atan2(-(tank.position.x - p.x), -(tank.position.z - p.z));
+    u.reset(p.x, p.z, yaw, terrain);
+    rifleFleet.push({ unit: u, ai: new RiflemanAI(), respawnTimer: 0 });
+  }
+
+  /** A rifleman was killed: hide him, smoke burst, start the respawn timer. */
+  function destroyRifleman(slot, killer) {
+    const r = slot.unit;
+    if (slot.respawnTimer > 0) return; // already down, respawn pending
+    r.alive = false;
+    r.hp = 0;
+    r.group.visible = false;
+    const dist = r.position.distanceTo(tank.position);
+    spawnSmoke(r.position, {
+      count: 20, size: 1.4, color: 0x4a4a4a, opacity: 0.7, life: 1.6,
+      sx: 0.8, sy: 0.8, sz: 0.8, vh: 3, vyLo: 1, vyHi: 3,
+    });
+    EngineAudio.crash(dist);
+    slot.respawnTimer = RIFLEMAN_RESPAWN_DELAY;
+    slot.ai.reset();
+    if (killer === tank) {
+      kills++;
+      addMessage("You killed " + r.callsign);
+    } else if (killer) {
+      shooterStatsFor(killer).kills++;
+      addMessage(killer.callsign + " killed " + r.callsign);
+    }
+  }
+
+  /** Bring a downed rifleman back at a fresh spawn point (same object). */
+  function respawnRifleman(slot) {
+    const p = findAiSpawn();
+    const yaw = Math.atan2(-(tank.position.x - p.x), -(tank.position.z - p.z));
+    slot.unit.reset(p.x, p.z, yaw, terrain);
+    slot.ai.reset();
+  }
+
+  /** Grow/shrink the squad to `n` riflemen (0 = none). Called from the menu
+   *  and on the title screen; the squad is adjusted live. */
+  function setRiflemanCount(n) {
+    n = clamp(Math.round(n), 0, RIFLEMAN_MAX);
+    while (rifleFleet.length > n) {
+      const slot = rifleFleet.pop();
+      scene.remove(slot.unit.group);
+      slot.unit.group.traverse((o) => {
+        if (o.isMesh) {
+          o.geometry.dispose();
+          if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
+          else o.material.dispose();
+        }
+      });
+    }
+    while (rifleFleet.length < n) spawnRifleman();
+    riflemanCount = rifleFleet.length;
+    rifleCountEl.textContent = riflemanCount;
+    rifleLabel.textContent = "RIFLEMEN";
+    rifleMinus.disabled = riflemanCount <= 0;
+    riflePlus.disabled = riflemanCount >= RIFLEMAN_MAX;
+    saveSettings();
+    return riflemanCount;
+  }
+
+  /** Respawn the whole squad at fresh points (restart). */
+  function respawnRifleFleet() {
+    for (const slot of rifleFleet) {
+      slot.respawnTimer = 0;
+      respawnRifleman(slot);
+    }
+  }
+
+  /** Tank vs rifleman: a moving tank that overlaps a rifleman runs him over
+   *  (unarmored physical damage, per-pair cooldown); the rifleman is pushed
+   *  clear of the hull so he can route around it. */
+  function runOverRiflemen(tanks, riflemen) {
+    for (const t of tanks) {
+      if (!t.alive) continue;
+      for (const r of riflemen) {
+        if (!r.alive) continue;
+        const dx = r.position.x - t.position.x;
+        const dz = r.position.z - t.position.z;
+        const d = Math.hypot(dx, dz);
+        if (d >= TANK_RAM_RANGE) continue;
+        // Push the rifleman to the edge of the hull's space (he yields).
+        if (d > 1e-3) {
+          r.position.x = t.position.x + (dx / d) * TANK_RAM_RANGE;
+          r.position.z = t.position.z + (dz / d) * TANK_RAM_RANGE;
+        } else {
+          r.position.x = t.position.x + TANK_RAM_RANGE;
+        }
+        r.group.position.copy(r.position);
+        // Only a moving tank deals damage (per-pair cooldown).
+        if (Math.abs(t.speed) < 2) continue;
+        t._roCd = t._roCd || new Map();
+        const cd = t._roCd.get(r);
+        if (cd !== undefined && cd > 0) continue;
+        t._roCd.set(r, TANK_RAM_COOLDOWN);
+        const raw = Math.round(10 + Math.abs(t.speed) * 2);
+        const dealt = r.takeDamage(raw);
+        if (dealt > 0) recordDamage(t, r, dealt);
+        if (dealt > 0 && r.hp <= 0) {
+          const slot = rifleFleet.find((s) => s.unit === r);
+          if (slot) destroyRifleman(slot, t);
+        }
+      }
     }
   }
 
@@ -966,7 +1097,8 @@ const Game = (() => {
     }
   }
 
-  /** Tick the per-obstacle and per-pair collision cooldowns for a tank. */
+  /** Tick the per-obstacle, per-pair and per-rifleman collision cooldowns
+   *  for a tank. */
   function tickCooldowns(t, dt) {
     if (t._obCd) {
       for (const [item, cd] of t._obCd) {
@@ -980,6 +1112,13 @@ const Game = (() => {
         const n = cd - dt;
         if (n <= 0) t._ramCd.delete(other);
         else t._ramCd.set(other, n);
+      }
+    }
+    if (t._roCd) {
+      for (const [other, cd] of t._roCd) {
+        const n = cd - dt;
+        if (n <= 0) t._roCd.delete(other);
+        else t._roCd.set(other, n);
       }
     }
   }
@@ -1002,6 +1141,7 @@ const Game = (() => {
         SETTINGS_KEY,
         JSON.stringify({
           cpuCount,
+          riflemanCount,
           muted: EngineAudio.isMuted(),
           musicVol,
           sfxVol,
@@ -1017,6 +1157,10 @@ const Game = (() => {
     typeof savedSettings.cpuCount === "number"
       ? clamp(Math.round(savedSettings.cpuCount), 0, CPU_MAX)
       : CPU_COUNT;
+  let riflemanCount =
+    typeof savedSettings.riflemanCount === "number"
+      ? clamp(Math.round(savedSettings.riflemanCount), 0, RIFLEMAN_MAX)
+      : RIFLEMAN_COUNT;
   nightMode = !!savedSettings.night;
   nightMix = nightMode ? 1 : 0;
   // Volumes are percentages (0-100); 100 = the original mix.
@@ -1069,6 +1213,10 @@ const Game = (() => {
       const s = shooterStats.get(slot.tank) || { kills: 0, damage: 0 };
       rows.push({ name: slot.tank.callsign, kills: s.kills, damage: s.damage, cls: "" });
     }
+    for (const slot of rifleFleet) {
+      const s = shooterStats.get(slot.unit) || { kills: 0, damage: 0 };
+      rows.push({ name: slot.unit.callsign, kills: s.kills, damage: s.damage, cls: "" });
+    }
     rows.forEach((r) => (r.score = r.damage + r.kills * KILL_SCORE));
     rows.sort((a, b) => b.score - a.score);
     scoreboardBody.textContent = "";
@@ -1096,6 +1244,7 @@ const Game = (() => {
     overlayBtn.textContent = btnLabel;
     // The count controls are only useful before a run (ready/destroyed).
     cpuControl.classList.toggle("hidden", state === "paused");
+    rifleControl.classList.toggle("hidden", state === "paused");
     // The scoreboard only makes sense mid-run (paused) or after destruction.
     const showBoard = state === "paused" || state === "destroyed";
     scoreboard.classList.toggle("hidden", !showBoard);
@@ -1118,6 +1267,7 @@ const Game = (() => {
       Music.newFlight(); // fresh random combat track per run
       spawnPlayerTank(); // fresh tank at the spawn point
       respawnFleet(); // fresh fleet at fresh points (M4)
+      respawnRifleFleet(); // fresh squad at fresh points (M7)
     }
     Input.lockPointer();
   }
@@ -1138,11 +1288,12 @@ const Game = (() => {
     hideOverlay();
     EngineAudio.start();
     Music.start();
-    Music.newFlight();
-    spawnPlayerTank();
-    respawnFleet();
-    restoreFelledTrees();
-    Input.lockPointer();
+      Music.newFlight();
+      spawnPlayerTank();
+      respawnFleet();
+      respawnRifleFleet();
+      restoreFelledTrees();
+      Input.lockPointer();
   }
 
   // --- Menu controls ---------------------------------------------------------
@@ -1210,6 +1361,8 @@ const Game = (() => {
   };
   cpuMinus.addEventListener("click", () => { unlockAudio(); setCpuCount(cpuCount - 1); });
   cpuPlus.addEventListener("click", () => { unlockAudio(); setCpuCount(cpuCount + 1); });
+  rifleMinus.addEventListener("click", () => { unlockAudio(); setRiflemanCount(riflemanCount - 1); });
+  riflePlus.addEventListener("click", () => { unlockAudio(); setRiflemanCount(riflemanCount + 1); });
   musicMinus.addEventListener("click", () => { unlockAudio(); setMusicVolume(musicVol - VOL_STEP); });
   musicPlus.addEventListener("click", () => { unlockAudio(); setMusicVolume(musicVol + VOL_STEP); });
   sfxMinus.addEventListener("click", () => { unlockAudio(); setSfxVolume(sfxVol - VOL_STEP); });
@@ -1334,6 +1487,11 @@ const Game = (() => {
       const aliveTanks = [tank];
       for (const slot of fleet) if (slot.tank.alive) aliveTanks.push(slot.tank);
       ctx.tanks = aliveTanks;
+      // All alive units (tanks + riflemen): the weapon pools hit-test this
+      // list, so tracers and shell splashes reach the infantry too.
+      const aliveRiflemen = [];
+      for (const slot of rifleFleet) if (slot.unit.alive) aliveRiflemen.push(slot.unit);
+      ctx.units = aliveTanks.concat(aliveRiflemen);
 
       // Player: keyboard + mouse -> control -> physics.
       const control = playerController.update(dt, tank, ctx);
@@ -1412,15 +1570,38 @@ const Game = (() => {
         }
       }
 
+      // Rifleman squad: AI -> physics -> burst fire (M7).
+      for (const slot of rifleFleet) {
+        const r = slot.unit;
+        if (!r.alive) {
+          slot.respawnTimer -= dt;
+          if (slot.respawnTimer <= 0) respawnRifleman(slot);
+          continue;
+        }
+        const rc = slot.ai.update(dt, r, ctx);
+        _prevPos.copy(r.position);
+        r.update(dt, rc, terrain);
+        blockObstacle(r, _prevPos);
+        if (!r.alive) destroyRifleman(slot, null); // e.g. died to obstacle chip damage
+        if (rc.firing && r.alive) {
+          tracers.fire(r, r.muzzleWorld(_muzzle), slot.ai.aimDir, MG_DAMAGE_AI);
+          flashes.flash(_muzzle);
+          EngineAudio.mgFire(r.position.distanceTo(tank.position));
+        }
+      }
+
       // Tank vs tank: push apart + speed-based damage to both (M5).
       collideTanks(ctx.tanks);
 
+      // Tank vs rifleman: a moving tank runs over the infantry (M7).
+      runOverRiflemen(ctx.tanks, aliveRiflemen);
+
       if (state === "playing") {
         // Tracers: integrate, collide, damage.
-        tracers.update(dt, ctx.tanks, terrain);
+        tracers.update(dt, ctx.units, terrain);
 
         // Shells: integrate (arc), detonate (splash), boom + blast effect.
-        shells.update(dt, ctx.tanks, terrain, (pos) => {
+        shells.update(dt, ctx.units, terrain, (pos) => {
           EngineAudio.shellBoom(pos.distanceTo(tank.position));
           flashes.flash(pos);
           spawnSmoke(pos, {

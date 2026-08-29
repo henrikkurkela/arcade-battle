@@ -253,3 +253,154 @@ class TankAI {
     this.target = best;
   }
 }
+
+// --- RiflemanAI tuning -------------------------------------------------------
+const RIFLEMAN_RETARGET = 0.5; // s between target re-picks
+const RIFLEMAN_ENGAGE_RANGE = 160; // m; nearest tank within this is engaged
+const RIFLEMAN_FIRE_RANGE = 150; // m; stop and fire inside this
+const RIFLEMAN_HOLD_RANGE = 110; // m; closer than this -> back off (reverse)
+const RIFLEMAN_BURST_TIME = 0.9; // s of firing per burst
+const RIFLEMAN_PAUSE_MIN = 1.0; // s between bursts (random up to MAX)
+const RIFLEMAN_PAUSE_MAX = 2.4;
+const RIFLEMAN_FIRE_INTERVAL = 0.12; // s between rifle shots in a burst
+const RIFLEMAN_FIRE_CONE = 0.94; // body must be within ~20 deg of the aim point
+const RIFLEMAN_LEAD = 0.3; // extra s of target motion built into the aim
+
+class RiflemanAI {
+  constructor() {
+    this.control = { throttle: 0, steer: 0, firing: false };
+    this.target = null; // tank currently being engaged
+    this.retargetTimer = 0;
+    this.fireCooldown = 0;
+    this.burstLeft = 0; // s of the current burst still firing
+    this.pauseLeft = 0; // s until the next burst may start
+    this.backingOff = false; // turning and walking away (no fire while doing it)
+    // Exact world direction of the next tracer (lead built in); main.js
+    // fires along this, so the body only needs to be roughly aligned.
+    this.aimDir = new THREE.Vector3(0, 0, -1);
+    this._aim = new THREE.Vector3();
+    this._toTgt = new THREE.Vector3();
+    this._fwd = new THREE.Vector3();
+  }
+
+  /** Clear engagement state (used on respawn / restart). */
+  reset() {
+    this.target = null;
+    this.retargetTimer = 0;
+    this.fireCooldown = 0;
+    this.burstLeft = 0;
+    this.pauseLeft = 0;
+    this.backingOff = false;
+    this.control.firing = false;
+  }
+
+  update(dt, r, ctx) {
+    const c = this.control;
+    c.throttle = 0;
+    c.steer = 0;
+    c.firing = false;
+
+    // 1. Target selection (nearest alive tank in range, any team).
+    this.retargetTimer -= dt;
+    if (this.retargetTimer <= 0 || !this.target || !this.target.alive) {
+      this.retargetTimer = RIFLEMAN_RETARGET;
+      this._pickTarget(r, ctx);
+    }
+    const t = this.target;
+    const engaging = t && t.alive;
+
+    // 2. Aim point + throttle: lead the target (tracers inherit the
+    // shooter's velocity, so the closing speed along the line of sight
+    // drives the lead time). Advance to firing range, hold at it, and —
+    // when pressed up close — turn and walk away (a soldier won't walk
+    // into the tracks, and can't reverse).
+    let dist = 0;
+    if (engaging) {
+      dist = r.position.distanceTo(t.position);
+      this._toTgt.copy(t.position).sub(r.position).normalize();
+      if (dist < RIFLEMAN_HOLD_RANGE) {
+        this.backingOff = true;
+        this._aim.copy(r.position).addScaledVector(this._toTgt, -60);
+        c.throttle = 1;
+      } else {
+        this.backingOff = false;
+        const closing =
+          MG_BULLET_SPEED +
+          (r.velocity.x - t.velocity.x) * this._toTgt.x +
+          (r.velocity.z - t.velocity.z) * this._toTgt.z;
+        const leadTime = dist / Math.max(closing, 40) + RIFLEMAN_LEAD;
+        this._aim.copy(t.position).addScaledVector(t.velocity, leadTime);
+        c.throttle = dist > RIFLEMAN_FIRE_RANGE ? 1 : 0;
+      }
+    } else {
+      this.backingOff = false;
+      this._aim.copy(ctx.player.position);
+      c.throttle = 1; // no target: walk toward the player
+    }
+
+    // 3. Steer the body toward the aim point (yaw servo; in-place pivot).
+    const dx = this._aim.x - r.position.x;
+    const dz = this._aim.z - r.position.z;
+    const desiredYaw = Math.atan2(-dx, -dz); // body front is (-sin, 0, -cos)
+    c.steer = clamp(wrapAngle(desiredYaw - r.yaw) * 2.0, -1, 1);
+
+    // 3b. Terrain avoidance: ground steeper than the slope limit directly
+    // ahead overrides the aim — steer toward the clearer side.
+    {
+      const fx = -Math.sin(r.yaw), fz = -Math.cos(r.yaw);
+      const rx = -fz, rz = fx; // right vector
+      const px = r.position.x, pz = r.position.z;
+      const h0 = ctx.terrain.heightAt(px, pz);
+      const hAhead = ctx.terrain.heightAt(px + fx * LOOKAHEAD, pz + fz * LOOKAHEAD);
+      if ((hAhead - h0) / LOOKAHEAD > SLOPE_TAN) {
+        const hLeft = ctx.terrain.heightAt(px - rx * LOOKAHEAD, pz - rz * LOOKAHEAD);
+        const hRight = ctx.terrain.heightAt(px + rx * LOOKAHEAD, pz + rz * LOOKAHEAD);
+        c.steer = hLeft - h0 < hRight - h0 ? 1 : -1;
+      }
+    }
+
+    // 4. Burst fire: in range and the body roughly on the aim point. The
+    // tracer flies along aimDir (exact lead), not the body heading.
+    this.fireCooldown -= dt;
+    if (engaging && !this.backingOff && dist <= RIFLEMAN_FIRE_RANGE) {
+      this._toTgt.copy(this._aim).sub(r.position);
+      r.barrelDir(this._fwd);
+      const aligned = this._toTgt.length() > 1e-3 && this._fwd.dot(this._toTgt.normalize()) > RIFLEMAN_FIRE_CONE;
+      if (aligned) {
+        this.aimDir.copy(this._toTgt);
+        if (this.burstLeft > 0) {
+          this.burstLeft -= dt;
+          if (this.fireCooldown <= 0) {
+            c.firing = true;
+            this.fireCooldown = RIFLEMAN_FIRE_INTERVAL;
+          }
+        } else if (this.pauseLeft <= 0) {
+          this.burstLeft = RIFLEMAN_BURST_TIME;
+          this.pauseLeft = RIFLEMAN_PAUSE_MIN + Math.random() * (RIFLEMAN_PAUSE_MAX - RIFLEMAN_PAUSE_MIN);
+        }
+      } else {
+        this.burstLeft = 0;
+      }
+    } else {
+      this.burstLeft = 0;
+    }
+    if (this.burstLeft <= 0) this.pauseLeft -= dt; // pause runs after the burst
+    return this.control;
+  }
+
+  _pickTarget(r, ctx) {
+    let best = null;
+    let bestD = RIFLEMAN_ENGAGE_RANGE;
+    const consider = (p) => {
+      if (!p || !p.alive) return;
+      const d = r.position.distanceTo(p.position);
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    };
+    consider(ctx.player);
+    for (const p of ctx.tanks) consider(p);
+    this.target = best;
+  }
+}

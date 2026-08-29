@@ -410,6 +410,7 @@ canvas {
 }
 
 #cpu-control,
+#rifle-control,
 #music-control,
 #sfx-control,
 #time-control {
@@ -429,6 +430,7 @@ canvas {
 }
 
 #cpu-control button,
+#rifle-control button,
 #music-control button,
 #sfx-control button {
   width: 34px;
@@ -443,18 +445,21 @@ canvas {
 }
 
 #cpu-control button:hover:not(:disabled),
+#rifle-control button:hover:not(:disabled),
 #music-control button:hover:not(:disabled),
 #sfx-control button:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.18);
 }
 
 #cpu-control button:active:not(:disabled),
+#rifle-control button:active:not(:disabled),
 #music-control button:active:not(:disabled),
 #sfx-control button:active:not(:disabled) {
   transform: scale(0.95);
 }
 
 #cpu-control button:disabled,
+#rifle-control button:disabled,
 #music-control button:disabled,
 #sfx-control button:disabled {
   opacity: 0.35;
@@ -483,7 +488,8 @@ canvas {
   transform: scale(0.95);
 }
 
-#cpu-count {
+#cpu-count,
+#rifle-count {
   min-width: 2ch;
   font-size: 18px;
 }
