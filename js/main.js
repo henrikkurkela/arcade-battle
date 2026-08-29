@@ -626,6 +626,7 @@ const Game = (() => {
       kills++;
       addMessage("You destroyed " + cp.callsign);
     } else {
+      shooterStatsFor(killer).kills++;
       addMessage(killer.callsign + " destroyed " + cp.callsign);
     }
   }
