@@ -16,6 +16,8 @@ const FOLIAGE_PER_FELL = 12; // pieces per felled tree
 const FOLIAGE_POOL_SIZE = 48; // pooled meshes (~4 simultaneous fellings in flight)
 const BODY_PER_KILL = 6; // pieces per killed rifleman
 const BODY_POOL_SIZE = 48; // pooled meshes (~8 simultaneous kills in flight)
+const PLANE_DEBRIS_PER_KILL = 10; // pieces per destroyed plane
+const PLANE_DEBRIS_POOL_SIZE = 96; // pooled meshes (~9 simultaneous kills in flight)
 const DEBRIS_GRAVITY = 9.8;
 const DEBRIS_AIR_DRAG = 0.5; // per second
 const DEBRIS_KICK = 12; // m/s max random scatter speed
@@ -122,6 +124,39 @@ class Debris {
         restTimer: 0,
       });
     }
+    // Plane-shaped chunks (ported from the Arcade Plane game): wing panels,
+    // fuselage tube, fin, flat plate.
+    this.plane = [];
+    this._nextFreeP = 0;
+    const pGeos = [
+      new THREE.BoxGeometry(0.55, 0.09, 0.4), // wing panel
+      new THREE.BoxGeometry(0.4, 0.09, 0.55), // wing panel
+      new THREE.CylinderGeometry(0.17, 0.17, 0.8, 8).rotateX(Math.PI / 2), // fuselage tube
+      new THREE.BoxGeometry(0.1, 0.55, 0.35), // fin
+      new THREE.BoxGeometry(0.45, 0.07, 0.45), // flat plate
+    ];
+    const pMats = [
+      new THREE.MeshLambertMaterial({ color: 0x8a8f94 }), // airframe grey
+      new THREE.MeshLambertMaterial({ color: 0xb3372f }), // red
+      new THREE.MeshLambertMaterial({ color: 0x26282c }), // dark metal
+    ];
+    for (let i = 0; i < PLANE_DEBRIS_POOL_SIZE; i++) {
+      const mesh = new THREE.Mesh(pGeos[i % pGeos.length], pMats[i % pMats.length]);
+      mesh.visible = false;
+      mesh.castShadow = true;
+      scene.add(mesh);
+      this.plane.push({
+        mesh,
+        active: false,
+        pos: new THREE.Vector3(),
+        vel: new THREE.Vector3(),
+        angVel: new THREE.Vector3(),
+        quat: new THREE.Quaternion(),
+        scale: 1,
+        resting: false,
+        restTimer: 0,
+      });
+    }
     this._axis = new THREE.Vector3();
     this._q = new THREE.Quaternion();
   }
@@ -142,6 +177,12 @@ class Debris {
    *  `vel`. */
   spawnFoliage(pos, vel) {
     this._burst(this.foliage, "_nextFreeF", FOLIAGE_PER_FELL, pos, vel);
+  }
+
+  /** Spawn a plane-destruction burst at `pos`, inheriting the plane's
+   *  velocity `vel`. */
+  spawnPlane(pos, vel) {
+    this._burst(this.plane, "_nextFreeP", PLANE_DEBRIS_PER_KILL, pos, vel);
   }
 
   _burst(list, idx, count, pos, vel) {
@@ -191,6 +232,7 @@ class Debris {
     for (const e of this.pool) this._step(e, dt, terrain);
     for (const e of this.foliage) this._step(e, dt, terrain);
     for (const e of this.body) this._step(e, dt, terrain);
+    for (const e of this.plane) this._step(e, dt, terrain);
   }
 
   _step(e, dt, terrain) {
@@ -239,6 +281,10 @@ class Debris {
       e.mesh.visible = false;
     }
     for (const e of this.body) {
+      e.active = false;
+      e.mesh.visible = false;
+    }
+    for (const e of this.plane) {
       e.active = false;
       e.mesh.visible = false;
     }

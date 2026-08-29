@@ -42,6 +42,33 @@ class PlayerController {
   }
 }
 
+// --- PlanePlayerController (plane vehicle) -----------------------------------
+// Keyboard-only flight controls (ported from the Arcade Plane game; no mouse,
+// no pointer lock): W/S pitch, A/D bank, Q/E rudder, Shift/Ctrl/C throttle,
+// Space cannon, X rockets.
+class PlanePlayerController {
+  constructor() {
+    this.control = { pitch: 0, roll: 0, rudder: 0, throttle: 0, firing: false, rocketFiring: false };
+  }
+
+  update(dt, plane, ctx) {
+    const c = this.control;
+    c.pitch =
+      (Input.isDown("KeyW", "ArrowUp") ? 1 : 0) -
+      (Input.isDown("KeyS", "ArrowDown") ? 1 : 0);
+    c.roll =
+      (Input.isDown("KeyA", "ArrowLeft") ? 1 : 0) -
+      (Input.isDown("KeyD", "ArrowRight") ? 1 : 0);
+    c.rudder = (Input.isDown("KeyQ") ? 1 : 0) - (Input.isDown("KeyE") ? 1 : 0);
+    c.throttle =
+      (Input.isDown("ShiftLeft", "ShiftRight") ? 1 : 0) -
+      (Input.isDown("ControlLeft", "ControlRight", "KeyC") ? 1 : 0);
+    c.firing = Input.isDown("Space");
+    c.rocketFiring = Input.isDown("KeyX");
+    return this.control;
+  }
+}
+
 // --- TankAI tuning -----------------------------------------------------------
 const RETARGET_INTERVAL = 0.3; // s between target re-picks
 const ENGAGE_RANGE = 1200; // m; nearest enemy within this is engaged

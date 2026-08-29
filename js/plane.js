@@ -2,8 +2,9 @@
 
 // ---------------------------------------------------------------------------
 // The airplane: a low-wing single-seater built from primitives, plus an
-// arcade flight model. (Copied from the Arcade Plane game; all planes here
-// are CPU — the player drives the tank.)
+// arcade flight model. (Copied from the Arcade Plane game; the player flies
+// one of these when the PLANE vehicle is selected, otherwise all planes are
+// CPU.)
 //
 // Model: units are meters, +Y is up, the nose points down -Z.
 //
@@ -66,7 +67,7 @@ class Plane {
     this.softArmor = PLANE_SOFT_ARMOR;
     this.hardArmor = PLANE_HARD_ARMOR;
 
-    // Grounded on the runway (unused here; planes are always airborne).
+    // Grounded on the garage pad (managed by main.js when the player flies).
     this.grounded = false;
 
     // Damage-smoke emission accumulator (s); driven by main.js while hp is low.
@@ -162,6 +163,11 @@ class Plane {
     this.elevator.rotation.x = 0;
     this.rudder.rotation.y = 0;
     this._syncGroup();
+  }
+
+  /** Called while on the "ready" screen: idle prop, no flight. */
+  idleProp(dt) {
+    this.prop.rotation.z -= 7 * dt;
   }
 
   /**
@@ -397,7 +403,7 @@ class Plane {
     g.add(finGroup);
     this.rudder = rudderHinge;
 
-    // Fixed landing gear (visual only — planes here are always airborne).
+    // Fixed landing gear (visual; the wheels define the crash/landing height).
     for (const side of [1, -1]) {
       const strut = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.55, 0.09), dark);
       strut.position.set(side * 1.05, -0.72, 0.55);

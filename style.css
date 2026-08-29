@@ -113,6 +113,14 @@ canvas {
   color: #ff5252;
 }
 
+#hud-rockets {
+  color: #ffd24a;
+}
+
+#hud-rockets.empty {
+  color: #ff5252;
+}
+
 #crosshair {
   position: absolute;
   top: 0;
@@ -146,6 +154,19 @@ canvas {
   height: 1.5px;
   width: 100%;
   margin-top: -0.75px;
+}
+
+#stall {
+  position: absolute;
+  top: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 5px;
+  color: #ff5252;
+  text-shadow: 0 0 12px rgba(255, 60, 60, 0.8);
+  animation: blink 0.5s steps(2, start) infinite;
 }
 
 #gun-heat {
@@ -189,6 +210,18 @@ canvas {
 }
 
 #garage-hint {
+  position: absolute;
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  color: #6dff8a;
+  text-shadow: 0 0 12px rgba(60, 220, 120, 0.8);
+}
+
+#landing-hint {
   position: absolute;
   bottom: 60px;
   left: 50%;
@@ -418,6 +451,7 @@ canvas {
   color: rgba(160, 200, 255, 0.85);
 }
 
+#vehicle-control,
 #cpu-control,
 #rifle-control,
 #plane-control,
@@ -504,6 +538,28 @@ canvas {
 }
 
 #time-control button:active {
+  transform: scale(0.95);
+}
+
+#vehicle-control button {
+  min-width: 86px;
+  height: 34px;
+  padding: 0 16px;
+  font: 700 13px/1 ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+  letter-spacing: 3px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+#vehicle-control button:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+#vehicle-control button:active {
   transform: scale(0.95);
 }
 

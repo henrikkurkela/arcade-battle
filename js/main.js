@@ -38,6 +38,14 @@
 // score, compass tape driven by the hull heading) and stays up after the
 // player is destroyed. Dust puffs kick up behind the tracks of any moving
 // tank, and the diesel engine rumble scales with throttle and speed.
+//
+// M9: vehicle selection (TANK / PLANE, persisted). Both player units exist in
+// the scene at all times; only the selected one is active (the other is
+// hidden and inert). The PLANE vehicle flies with keyboard controls (W/S
+// pitch, A/D bank, Q/E rudder, Shift/Ctrl/C throttle, Space cannon, X
+// rockets) under a banked chase camera, has a stall warning and limited
+// rockets, and lands on the garage pad (its runway) to restore HP. It joins
+// the plane list, so tanks, riflemen, AA guns and CPU planes can target it.
 // ---------------------------------------------------------------------------
 
 const Game = (() => {
@@ -165,6 +173,28 @@ const Game = (() => {
   const TREE_FELL_SPEED_CUT = 0.3; // fraction of speed lost plowing through
   const CAM_SHAKE_FELL = 0.15; // camera shake when the player fells a tree
 
+  // --- Vehicle selection (M9) --------------------------------------------------
+  const VEHICLE_TANK = "tank";
+  const VEHICLE_PLANE = "plane";
+  // Plane player weapons (ported from the Arcade Plane game). SOFT damage: a
+  // tank's TANK_SOFT_ARMOR (10) cancels it, so a tank still takes 1 per hit.
+  const PLAYER_BULLET_DAMAGE = 10; // raw damage per player cannon tracer
+  const PLAYER_FIRE_INTERVAL = 0.05; // s between player cannon shots
+  const ROCKET_MAX_AMMO = 6; // rockets the player can hold
+  const ROCKET_DAMAGE_PER_ROCKET = 100; // damage dealt (any weapon) to earn 1
+  const ROCKET_FIRE_INTERVAL = 0.6; // s between rockets
+  // Garage-pad landing: the pad is the plane's runway (ported from the Arcade
+  // Plane game's runway logic, using the existing pad rectangle).
+  const GEAR_HEIGHT = 1.15; // m; wheels below the plane's center (crash check)
+  const LAND_MAX_SINK = 15; // m/s; steeper descent = hard-landing crash
+  const LAND_MIN_UP = 0.9; // plane.up.y must exceed this (not inverted / hard-banked)
+  const LAND_MAX_PITCH = THREE.MathUtils.degToRad(25); // nose-up limit for a gear landing
+  const LAND_MIN_PITCH = THREE.MathUtils.degToRad(-15); // nose-down limit (no nose-over)
+  const GROUND_ROLL_DECEL = 2.2; // m/s^2 rolling friction while grounded
+  const LANDING_HINT_TIME = 2.5; // s the "LANDED" hint stays up
+  // Player plane vs CPU plane: a body collision is instant player death.
+  const PLANE_RAM_RANGE = 4.4; // m between two planes => collision
+
   // --- Title-screen camera ---------------------------------------------------
   const ORBIT_RADIUS = 60; // m from the map center
   const ORBIT_HEIGHT = 30; // m above the ground at the map center
@@ -220,6 +250,19 @@ const Game = (() => {
   const gunHeatFill = document.getElementById("gun-heat-fill");
   const overheat = document.getElementById("overheat");
   const garageHint = document.getElementById("garage-hint");
+  const vehicleControl = document.getElementById("vehicle-control");
+  const vehicleToggle = document.getElementById("vehicle-toggle");
+  const hudAltRow = document.getElementById("hud-alt-row");
+  const hudAlt = document.getElementById("hud-alt");
+  const hudThrottleRow = document.getElementById("hud-throttle-row");
+  const hudThrottle = document.getElementById("hud-throttle");
+  const hudShellRow = document.getElementById("hud-shell-row");
+  const hudRocketsRow = document.getElementById("hud-rockets-row");
+  const hudRockets = document.getElementById("hud-rockets");
+  const tankHints = document.getElementById("tank-hints");
+  const planeHints = document.getElementById("plane-hints");
+  const stall = document.getElementById("stall");
+  const landingHint = document.getElementById("landing-hint");
 
   // --- Message feed ----------------------------------------------------------
   const MSG_LIFE_MS = 5000; // matches the msg-fade animation
@@ -406,6 +449,20 @@ const Game = (() => {
   let chaseCam = null;
   let playerController = null;
   let ctx = null;
+  // Player plane + chase camera + controller (M9). Both player units are built
+  // in buildWorld(); `player` is the active one (the other is hidden/inert).
+  let plane = null;
+  let planeCam = null;
+  let planeController = null;
+  let player = null; // the active player unit (tank or plane)
+  let vehicle = VEHICLE_TANK; // selected vehicle (persisted)
+  // Plane combat state (M9). The gun heat/overheat state is shared with the
+  // tank's MG (only one vehicle is active at a time).
+  let rocketAmmo = ROCKET_MAX_AMMO;
+  let rocketDamageAccum = 0;
+  let rocketFireCooldown = 0;
+  let stallWarned = false;
+  let landingHintTimer = 0;
 
   // --- Combat (M3) -----------------------------------------------------------
   let tracers = null;
@@ -488,8 +545,13 @@ const Game = (() => {
     tank = new Tank(scene, { livery: 0x8a8f94 });
     tank.team = "player";
     tank.callsign = "YOU";
+    plane = new Plane(scene);
+    plane.team = "player";
+    plane.callsign = "YOU";
     chaseCam = new ChaseCamera(camera);
+    planeCam = new PlaneChaseCamera(camera);
     playerController = new PlayerController();
+    planeController = new PlanePlayerController();
     ctx = { player: tank, tanks: [tank], riflemen: [], planes: [], units: [tank], terrain };
     tracers = new Tracers(scene);
     shells = new Shells(scene);
@@ -506,8 +568,8 @@ const Game = (() => {
       pool.onAADisabled = aaKnockOut;
     }
     aaGuns = new AAGuns(scene, terrain, projectiles, rockets);
-    spawnPlayerTank();
-    // Apply the persisted counts (the player tank must exist first).
+    applyVehicle(); // spawn + show the selected vehicle (M9)
+    // Apply the persisted counts (the player units must exist first).
     setCpuCount(cpuCount);
     setRiflemanCount(riflemanCount);
     setPlaneCount(planeCount);
@@ -517,7 +579,7 @@ const Game = (() => {
   /** Display name of a shooter (player, CPU tank, plane, rifleman, or AA gun)
    *  for the message feed. */
   function shooterName(owner) {
-    if (owner === tank) return "You";
+    if (owner === player) return "You";
     if (owner.team === "aa") return "an AA gun";
     if (owner.team === "riflemen") return "the riflemen";
     return owner.callsign;
@@ -525,9 +587,9 @@ const Game = (() => {
 
   /** A unit was destroyed by a weapon hit: dispatch to the right handler. */
   function handleKill(owner, victim) {
-    if (victim === tank) {
+    if (victim === player) {
       destroyReason = "You were shot down by " + shooterName(owner) + ".";
-      return; // death itself is handled via !tank.alive below
+      return; // death itself is handled via !player.alive below
     }
     const slot = fleet.find((s) => s.tank === victim);
     if (slot) {
@@ -638,18 +700,19 @@ const Game = (() => {
     return bestYaw;
   }
 
-  /** Place the player tank at the spawn point and snap the chase camera.
-   *  Also resets the combat state (M3) and clears all in-flight effects. */
-  function spawnPlayerTank() {
-    tank.reset(0, 0, spawnYaw(), terrain);
-    chaseCam.snap(tank);
-    focus.copy(tank.position);
+  /** Reset the per-run combat/score state (shared by both vehicles). */
+  function resetRunState() {
     mgCooldown = 0;
     gunTemp = 0;
     gunOverheated = false;
     gunHeatShown = false;
     overheatWarned = false;
     shellReload = 0;
+    rocketAmmo = ROCKET_MAX_AMMO;
+    rocketDamageAccum = 0;
+    rocketFireCooldown = 0;
+    stallWarned = false;
+    landingHintTimer = 0;
     kills = 0;
     damageDealt = 0;
     rifleKills = 0;
@@ -669,6 +732,68 @@ const Game = (() => {
     debris.clear();
     flashes.clear();
     clearSmokes();
+  }
+
+  /** Place the player tank at the spawn point and snap the chase camera.
+   *  Also resets the combat state (M3) and clears all in-flight effects. */
+  function spawnPlayerTank() {
+    tank.reset(0, 0, spawnYaw(), terrain);
+    chaseCam.snap(tank);
+    focus.copy(tank.position);
+    resetRunState();
+  }
+
+  /** Place the player plane 160 m above the garage pad (its runway) facing
+   *  north, snap the plane chase camera, and reset the run state (M9). */
+  function spawnPlayerPlane() {
+    plane.reset(0, 160, 0, 0);
+    planeCam.snap(plane);
+    focus.copy(plane.position);
+    resetRunState();
+  }
+
+  /** Show the selected vehicle and hide the other (M9). The hidden unit stays
+   *  inert at its spawn point; the active one is spawned fresh. */
+  function applyVehicle() {
+    const isPlane = vehicle === VEHICLE_PLANE;
+    tank.group.visible = !isPlane;
+    plane.group.visible = isPlane;
+    player = isPlane ? plane : tank;
+    if (isPlane) spawnPlayerPlane();
+    else spawnPlayerTank();
+    EngineAudio.setEngineMode(isPlane ? "prop" : "diesel");
+    hudAltRow.classList.toggle("hidden", !isPlane);
+    hudThrottleRow.classList.toggle("hidden", !isPlane);
+    hudRocketsRow.classList.toggle("hidden", !isPlane);
+    hudShellRow.classList.toggle("hidden", isPlane);
+    tankHints.classList.toggle("hidden", isPlane);
+    planeHints.classList.toggle("hidden", !isPlane);
+    stall.classList.add("hidden");
+    landingHint.classList.add("hidden");
+    vehicleToggle.textContent = isPlane ? "PLANE" : "TANK";
+    updateTitleOverlay();
+  }
+
+  /** Set the title-screen text and start button for the selected vehicle. */
+  function updateTitleOverlay() {
+    const isPlane = vehicle === VEHICLE_PLANE;
+    overlayText.innerHTML =
+      (isPlane
+        ? "You&rsquo;re a lone fighter over hostile territory.<br />" +
+          "Dogfight the enemy fleet, dodge the AA ring, hold your speed.<br />" +
+          "Land on the garage pad to restore your HP."
+        : "You&rsquo;re a lone tank in a free-for-all.<br />" +
+          "Gun down the enemy fleet, arc your shells, retreat to the garage to repair.") +
+      (bestScore > 0 ? "<br /><br />BEST SCORE: " + bestScore : "");
+    overlayBtn.textContent = isPlane ? "Fly" : "Drive";
+  }
+
+  /** Toggle the selected vehicle from the title screen (M9). */
+  function setVehicle(v) {
+    if (v === vehicle) return;
+    vehicle = v;
+    applyVehicle();
+    saveSettings();
   }
 
   // --- AI fleet (M4) ---------------------------------------------------------
@@ -744,13 +869,13 @@ const Game = (() => {
     cp.alive = false;
     cp.hp = 0;
     cp.group.visible = false;
-    const dist = cp.position.distanceTo(tank.position);
+    const dist = cp.position.distanceTo(player.position);
     debris.spawn(cp.position, cp.velocity);
     spawnSmoke(cp.position);
     EngineAudio.crash(dist);
     slot.respawnTimer = CPU_RESPAWN_DELAY;
     slot.ai.reset();
-    if (killer === tank) {
+    if (killer === player) {
       kills++;
       addMessage("You destroyed " + cp.callsign);
     } else {
@@ -809,7 +934,7 @@ const Game = (() => {
     r.alive = false;
     r.hp = 0;
     r.group.visible = false;
-    const dist = r.position.distanceTo(tank.position);
+    const dist = r.position.distanceTo(player.position);
     // Blood splash at torso height: short-lived red particles that fall.
     _smokePt.copy(r.position);
     _smokePt.y += 1;
@@ -822,7 +947,7 @@ const Game = (() => {
     EngineAudio.scream(dist);
     slot.respawnTimer = RIFLEMAN_RESPAWN_DELAY;
     slot.ai.reset();
-    if (killer === tank) {
+    if (killer === player) {
       kills++;
       addMessage("You killed " + r.callsign);
     } else if (killer) {
@@ -913,13 +1038,13 @@ const Game = (() => {
     cp.alive = false;
     cp.hp = 0;
     cp.group.visible = false;
-    const dist = cp.position.distanceTo(tank.position);
+    const dist = cp.position.distanceTo(player.position);
     debris.spawn(cp.position, cp.velocity);
     spawnSmoke(cp.position);
     EngineAudio.crash(dist);
     slot.respawnTimer = PLANE_RESPAWN_DELAY;
     slot.ai.reset();
-    if (killer === tank) {
+    if (killer === player) {
       kills++;
       addMessage("You shot down " + cp.callsign);
     } else if (killer) {
@@ -1026,27 +1151,131 @@ const Game = (() => {
     felledTrees.length = 0;
   }
 
-  /** The player was destroyed: hide the tank, debris burst + big smoke +
-   *  boom, shake, delayed overlay with the reason, distance, kills, score
+  /** The player was destroyed: hide the active unit, debris burst + big smoke
+   *  + boom, shake, delayed overlay with the reason, distance, kills, score
    *  and the full scoreboard. */
   function destroyPlayer(reason) {
     state = "destroyed";
     destroyReason = reason;
-    tank.alive = false;
     const finalScore = damageDealt + kills * KILL_SCORE;
     if (finalScore > bestScore) {
       bestScore = finalScore;
       saveSettings();
     }
-    tank.group.visible = false;
-    debris.spawn(tank.position, tank.velocity);
-    spawnSmoke(tank.position, {
-      count: 120, size: 3.0, color: 0x3a3a3a, opacity: 0.9, life: 3.5,
-      sx: 2.5, sy: 1.5, sz: 2.5, vh: 6, vyLo: 1.5, vyHi: 7,
-    });
-    EngineAudio.crash(0);
-    chaseCam.shake = CAM_SHAKE_DESTROYED;
+    if (vehicle === VEHICLE_PLANE) {
+      plane.alive = false;
+      plane.group.visible = false;
+      // Shot down in the air: the airframe breaks apart and the pieces fall.
+      // (Ground impacts keep the wreck where it hit.)
+      if (reason === "You were shot down.") {
+        debris.spawnPlane(plane.position, plane.velocity);
+      }
+      spawnSmoke(plane.position, {
+        count: 120, size: 3.0, color: 0x3a3a3a, opacity: 0.9, life: 3.5,
+        sx: 2.5, sy: 1.5, sz: 2.5, vh: 6, vyLo: 1.5, vyHi: 7,
+      });
+      EngineAudio.crash(0);
+      planeCam.shake = CAM_SHAKE_DESTROYED;
+    } else {
+      tank.alive = false;
+      tank.group.visible = false;
+      debris.spawn(tank.position, tank.velocity);
+      spawnSmoke(tank.position, {
+        count: 120, size: 3.0, color: 0x3a3a3a, opacity: 0.9, life: 3.5,
+        sx: 2.5, sy: 1.5, sz: 2.5, vh: 6, vyLo: 1.5, vyHi: 7,
+      });
+      EngineAudio.crash(0);
+      chaseCam.shake = CAM_SHAKE_DESTROYED;
+    }
     overlayDelay = OVERLAY_DELAY; // let the impact register before the panel appears
+  }
+
+  // --- Plane grounding / landing (M9) ------------------------------------------
+  // The garage pad is the plane's runway: a clean touchdown restores HP and
+  // the plane rolls on the strip until it lifts off again (ported from the
+  // Arcade Plane game's runway logic, using the existing pad rectangle).
+  function handlePlaneGrounding(dt) {
+    const p = plane.position;
+    const inPad =
+      p.x > BASE.x0 && p.x < BASE.x1 && p.z > BASE.z0 && p.z < BASE.z1;
+
+    if (plane.grounded) {
+      if (!inPad) {
+        // Rolled off the edge: fall onto the hills, the crash check finishes it.
+        plane.grounded = false;
+        return;
+      }
+      // Takeoff: lift has given the velocity a real upward component.
+      if (plane.velocity.y > 0.5) {
+        plane.grounded = false;
+        return;
+      }
+      // Pin to the strip, kill vertical motion, apply rolling friction.
+      p.y = BASE.y + GEAR_HEIGHT;
+      plane.velocity.y = 0;
+      const sp = plane.speed;
+      if (sp > 0.01) {
+        plane.velocity.multiplyScalar(Math.max(0, sp - GROUND_ROLL_DECEL * dt) / sp);
+      }
+      return;
+    }
+
+    // Touchdown: wheels reach the pad while descending.
+    if (inPad && plane.velocity.y < 0 && p.y - GEAR_HEIGHT <= BASE.y + 1.0) {
+      if (
+        plane.up.y > LAND_MIN_UP &&
+        plane.pitch > LAND_MIN_PITCH &&
+        plane.pitch < LAND_MAX_PITCH &&
+        plane.velocity.y >= -LAND_MAX_SINK
+      ) {
+        plane.grounded = true;
+        p.y = BASE.y + GEAR_HEIGHT;
+        plane.velocity.y = 0;
+        plane.hp = plane.maxHp; // a clean landing restores HP
+        landingHintTimer = LANDING_HINT_TIME;
+      }
+      // Otherwise the ground check in checkPlaneCollisions() crashes the plane.
+    }
+  }
+
+  /** Plane vs ground/scenery: a hard impact destroys the player plane (M9). */
+  function checkPlaneCollisions() {
+    const p = plane.position;
+    // Wheels sit GEAR_HEIGHT m below the plane's center.
+    if (p.y - GEAR_HEIGHT < terrain.heightAt(p.x, p.z)) {
+      destroyPlayer("You hit the ground.");
+      return;
+    }
+    if (scenery.collidesWith(p, 2.2)) {
+      destroyPlayer("You flew into something.");
+    }
+  }
+
+  /** Player plane vs CPU plane: a body collision is instant player death (M9). */
+  function checkPlaneRam() {
+    for (const slot of planeFleet) {
+      if (
+        slot.plane.alive &&
+        slot.plane.position.distanceTo(plane.position) < PLANE_RAM_RANGE
+      ) {
+        destroyPlayer("You collided with an enemy plane.");
+        return;
+      }
+    }
+  }
+
+  /** Bank player damage toward rockets: every ROCKET_DAMAGE_PER_ROCKET dealt
+   *  (cannon or rocket) earns one, up to the cap. No banking while full (M9). */
+  function awardRocketDamage(dealt) {
+    if (rocketAmmo >= ROCKET_MAX_AMMO) return;
+    rocketDamageAccum += dealt;
+    while (
+      rocketAmmo < ROCKET_MAX_AMMO &&
+      rocketDamageAccum >= ROCKET_DAMAGE_PER_ROCKET
+    ) {
+      rocketDamageAccum -= ROCKET_DAMAGE_PER_ROCKET;
+      rocketAmmo++;
+    }
   }
 
   // --- Smoke ------------------------------------------------------------------
@@ -1190,8 +1419,9 @@ const Game = (() => {
   // --- Collisions (M5) -------------------------------------------------------
   /** Credit damage to its shooter (player or AI) for the scoreboard. */
   function recordDamage(owner, victim, dealt) {
-    if (owner === tank) {
+    if (owner === player) {
       damageDealt += dealt;
+      if (vehicle === VEHICLE_PLANE) awardRocketDamage(dealt);
     } else if (owner.team === "riflemen") {
       rifleDamage += dealt;
     } else if (owner.team === "aa") {
@@ -1201,8 +1431,9 @@ const Game = (() => {
       shooterStatsFor(owner).damage += dealt;
     }
     // Small camera shake when the player is hit.
-    if (victim === tank && chaseCam) {
-      chaseCam.shake = Math.max(chaseCam.shake, CAM_SHAKE_HIT * dealt);
+    if (victim === player) {
+      const cam = vehicle === VEHICLE_PLANE ? planeCam : chaseCam;
+      cam.shake = Math.max(cam.shake, CAM_SHAKE_HIT * dealt);
     }
   }
 
@@ -1227,8 +1458,11 @@ const Game = (() => {
       }
     }
     if (felled.length) {
-      if (t === tank) chaseCam.shake = Math.max(chaseCam.shake, CAM_SHAKE_FELL);
-      EngineAudio.treeThud(t.position.distanceTo(tank.position));
+      if (t === player) {
+        const cam = vehicle === VEHICLE_PLANE ? planeCam : chaseCam;
+        cam.shake = Math.max(cam.shake, CAM_SHAKE_FELL);
+      }
+      EngineAudio.treeThud(t.position.distanceTo(player.position));
       for (const item of felled) {
         _foliagePt.copy(item.mesh.position);
         _foliagePt.y += 2.5; // mid-trunk: the burst reads as the tree coming apart
@@ -1257,7 +1491,7 @@ const Game = (() => {
     }
     if (!canChip) return;
     // No kind: unarmored physical damage (armor does not stop a collision).
-    if (t.takeDamage(OBSTACLE_DMG) > 0 && t.hp <= 0 && t === tank) {
+    if (t.takeDamage(OBSTACLE_DMG) > 0 && t.hp <= 0 && t === player) {
       destroyReason = "You crashed into a " + (hit.length ? hit[0] : felled[0]).kind + ".";
     }
   }
@@ -1308,8 +1542,8 @@ const Game = (() => {
         const dealtB = b.takeDamage(raw);
         if (dealtA > 0) recordDamage(b, a, dealtA);
         if (dealtB > 0) recordDamage(a, b, dealtB);
-        if (dealtA > 0 && a.hp <= 0 && a === tank) destroyReason = "You were rammed.";
-        if (dealtB > 0 && b.hp <= 0 && b === tank) destroyReason = "You were rammed.";
+        if (dealtA > 0 && a.hp <= 0 && a === player) destroyReason = "You were rammed.";
+        if (dealtB > 0 && b.hp <= 0 && b === player) destroyReason = "You were rammed.";
         if (dealtA > 0 && a.hp <= 0) {
           const slot = fleet.find((s) => s.tank === a);
           if (slot) destroyAiTank(slot, b);
@@ -1365,6 +1599,7 @@ const Game = (() => {
       localStorage.setItem(
         SETTINGS_KEY,
         JSON.stringify({
+          vehicle,
           cpuCount,
           riflemanCount,
           planeCount,
@@ -1412,6 +1647,7 @@ const Game = (() => {
     typeof savedSettings.bestScore === "number"
       ? Math.max(0, Math.round(savedSettings.bestScore))
       : 0;
+  vehicle = savedSettings.vehicle === VEHICLE_PLANE ? VEHICLE_PLANE : VEHICLE_TANK;
   EngineAudio.setMuted(!!savedSettings.muted);
   mutedBadge.classList.toggle("hidden", !EngineAudio.isMuted());
   // Apply the persisted volumes and sync the overlay controls. (The enemy
@@ -1480,6 +1716,7 @@ const Game = (() => {
     overlayText.innerHTML = text;
     overlayBtn.textContent = btnLabel;
     // The count controls are only useful before a run (ready/destroyed).
+    vehicleControl.classList.toggle("hidden", state === "paused");
     cpuControl.classList.toggle("hidden", state === "paused");
     rifleControl.classList.toggle("hidden", state === "paused");
     planeControl.classList.toggle("hidden", state === "paused");
@@ -1504,12 +1741,14 @@ const Game = (() => {
     Music.start();
     if (!resuming) {
       Music.newFlight(); // fresh random combat track per run
-      spawnPlayerTank(); // fresh tank at the spawn point
+      if (vehicle === VEHICLE_PLANE) spawnPlayerPlane(); // fresh plane over the pad
+      else spawnPlayerTank(); // fresh tank at the spawn point
       respawnFleet(); // fresh fleet at fresh points (M4)
       respawnRifleFleet(); // fresh squad at fresh points (M7)
       respawnPlaneFleet(); // fresh plane fleet at fresh points (M8)
     }
-    Input.lockPointer();
+    // The tank aims with a pointer-locked mouse; the plane is keyboard-only.
+    if (vehicle === VEHICLE_TANK) Input.lockPointer();
   }
 
   function pause() {
@@ -1523,18 +1762,19 @@ const Game = (() => {
   }
 
   function restart() {
-    // Fresh tank on the same map, fleet respawned, score reset.
+    // Fresh player unit on the same map, fleet respawned, score reset.
     state = "playing";
     hideOverlay();
     EngineAudio.start();
     Music.start();
       Music.newFlight();
-      spawnPlayerTank();
+      if (vehicle === VEHICLE_PLANE) spawnPlayerPlane();
+      else spawnPlayerTank();
       respawnFleet();
       respawnRifleFleet();
       respawnPlaneFleet();
       restoreFelledTrees();
-      Input.lockPointer();
+      if (vehicle === VEHICLE_TANK) Input.lockPointer();
   }
 
   // --- Menu controls ---------------------------------------------------------
@@ -1600,6 +1840,9 @@ const Game = (() => {
     EngineAudio.start();
     Music.start();
   };
+  vehicleToggle.addEventListener("click", () =>
+    setVehicle(vehicle === VEHICLE_TANK ? VEHICLE_PLANE : VEHICLE_TANK)
+  );
   cpuMinus.addEventListener("click", () => { unlockAudio(); setCpuCount(cpuCount - 1); });
   cpuPlus.addEventListener("click", () => { unlockAudio(); setCpuCount(cpuCount + 1); });
   rifleMinus.addEventListener("click", () => { unlockAudio(); setRiflemanCount(riflemanCount - 1); });
@@ -1663,13 +1906,15 @@ const Game = (() => {
    *  player is destroyed (the last readout stays up under the overlay). */
   function updateHud() {
     if (state !== "playing" && state !== "destroyed") return;
+    const isPlane = vehicle === VEHICLE_PLANE;
+    const unit = isPlane ? plane : tank;
     // HP bar: green above 50%, amber above 25%, red below.
-    const hpPct = Math.max(0, (tank.hp / tank.maxHp) * 100);
+    const hpPct = Math.max(0, (unit.hp / unit.maxHp) * 100);
     hpFill.style.width = hpPct + "%";
     hpFill.style.background = hpPct > 50 ? "#4caf50" : hpPct > 25 ? "#ffb300" : "#f44336";
     // Speed (km/h) and heading (degrees + compass point).
-    hudSpeed.textContent = Math.round(Math.abs(tank.speed) * 3.6);
-    const bearing = ((360 - THREE.MathUtils.radToDeg(tank.yaw)) % 360 + 360) % 360;
+    hudSpeed.textContent = Math.round((isPlane ? unit.forwardSpeed : Math.abs(unit.speed)) * 3.6);
+    const bearing = ((360 - THREE.MathUtils.radToDeg(unit.yaw)) % 360 + 360) % 360;
     const card = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(bearing / 45) % 8];
     hudHeading.textContent = Math.round(bearing) + "\u00B0 " + card;
     // Slide the tape so the current bearing sits under the center caret.
@@ -1678,15 +1923,32 @@ const Game = (() => {
       "translateX(" + (center - (bearing + 360) * COMPASS_PX_PER_DEG) + "px)";
     hudKills.textContent = kills;
     hudScore.textContent = damageDealt + kills * KILL_SCORE;
-    // Shell status: READY, or the reload countdown (red while reloading).
-    if (shellReload > 0) {
-      hudShell.textContent = shellReload.toFixed(1) + "s";
-      hudShell.classList.add("empty");
+    if (isPlane) {
+      // Altitude (AGL) and throttle.
+      hudAlt.textContent = Math.max(
+        0,
+        Math.round(unit.position.y - terrain.heightAt(unit.position.x, unit.position.z))
+      );
+      hudThrottle.textContent = Math.round(unit.throttle * 100);
+      // Rocket count (red while empty).
+      hudRockets.textContent = rocketAmmo;
+      hudRockets.classList.toggle("empty", rocketAmmo === 0);
+      // STALL warning: a beep the moment it appears.
+      const stalling = state === "playing" && unit.forwardSpeed < STALL_WARN;
+      stall.classList.toggle("hidden", !stalling);
+      if (stalling && !stallWarned) EngineAudio.warnBeep();
+      stallWarned = stalling;
     } else {
-      hudShell.textContent = "READY";
-      hudShell.classList.remove("empty");
+      // Shell status: READY, or the reload countdown (red while reloading).
+      if (shellReload > 0) {
+        hudShell.textContent = shellReload.toFixed(1) + "s";
+        hudShell.classList.add("empty");
+      } else {
+        hudShell.textContent = "READY";
+        hudShell.classList.remove("empty");
+      }
     }
-    // MG heat bar: appears at 50% temp, stays visible until fully cool;
+    // Gun heat bar: appears at 50% temp, stays visible until fully cool;
     // red while the gun is locked out.
     if (gunTemp >= 50) gunHeatShown = true;
     else if (gunTemp <= 0) gunHeatShown = false;
@@ -1701,13 +1963,18 @@ const Game = (() => {
     overheatWarned = overheating;
   }
 
-  /** Project the barrel direction (the true line of fire) onto the screen. */
+  /** Project the line of fire (turret barrel, or the plane's nose) onto the
+   *  screen. */
   function updateCrosshair() {
     if (state !== "playing") {
       crosshair.classList.add("hidden");
       return;
     }
-    _aimPt.copy(tank.position).addScaledVector(tank.barrelDir(_barrel), 1000).project(camera);
+    if (vehicle === VEHICLE_PLANE) {
+      _aimPt.copy(plane.position).addScaledVector(plane.forward, 1000).project(camera);
+    } else {
+      _aimPt.copy(tank.position).addScaledVector(tank.barrelDir(_barrel), 1000).project(camera);
+    }
     if (_aimPt.z > 1) {
       crosshair.classList.add("hidden");
       return;
@@ -1727,70 +1994,111 @@ const Game = (() => {
     last = now;
 
     if (state === "playing") {
-      // All alive tanks (player + fleet): the weapon pools and the AI share
-      // this list for hit tests and targeting.
-      const aliveTanks = [tank];
+      // All alive tanks (active player tank + fleet): the weapon pools and the
+      // AI share this list for hit tests and targeting.
+      const aliveTanks = vehicle === VEHICLE_TANK ? [tank] : [];
       for (const slot of fleet) if (slot.tank.alive) aliveTanks.push(slot.tank);
       ctx.tanks = aliveTanks;
       // All alive riflemen: the weapon pools hit-test them, the AI targets them.
       const aliveRiflemen = [];
       for (const slot of rifleFleet) if (slot.unit.alive) aliveRiflemen.push(slot.unit);
       ctx.riflemen = aliveRiflemen;
-      // All alive planes (CPU fleet): the weapon pools hit-test them, the AI
-      // targets them, and the AA guns engage them.
-      const alivePlanes = [];
+      // All alive planes (active player plane + CPU fleet): the weapon pools
+      // hit-test them, the AI targets them, and the AA guns engage them.
+      const alivePlanes = vehicle === VEHICLE_PLANE ? [plane] : [];
       for (const slot of planeFleet) if (slot.plane.alive) alivePlanes.push(slot.plane);
       ctx.planes = alivePlanes;
+      ctx.player = vehicle === VEHICLE_PLANE ? plane : tank;
       // Every hittable unit (tanks + riflemen + planes): the weapon pools are
       // target-agnostic and hit-test this list.
       ctx.units = aliveTanks.concat(aliveRiflemen, alivePlanes);
 
-      // Player: keyboard + mouse -> control -> physics.
-      const control = playerController.update(dt, tank, ctx);
-      _prevPos.copy(tank.position);
-      tank.update(dt, control, terrain);
-      blockObstacle(tank, _prevPos);
-      emitDamageSmoke(tank, dt);
-      emitDust(tank, dt, control.steer);
-      tickCooldowns(tank, dt);
-      focus.copy(tank.position);
+      // Player: controls -> physics -> weapons (branch on vehicle, M9).
+      if (vehicle === VEHICLE_TANK) {
+        const control = playerController.update(dt, tank, ctx);
+        _prevPos.copy(tank.position);
+        tank.update(dt, control, terrain);
+        blockObstacle(tank, _prevPos);
+        emitDamageSmoke(tank, dt);
+        emitDust(tank, dt, control.steer);
+        tickCooldowns(tank, dt);
+        focus.copy(tank.position);
 
-      // Garage (M5): while the player's center is inside the pad, repair over
-      // time (player only; AI tanks drive through it unchanged).
-      inGarage =
-        tank.alive &&
-        tank.position.x > BASE.x0 && tank.position.x < BASE.x1 &&
-        tank.position.z > BASE.z0 && tank.position.z < BASE.z1;
-      if (inGarage && tank.hp < tank.maxHp) {
-        tank.hp = Math.min(tank.maxHp, tank.hp + BASE_REPAIR_RATE * dt);
-      }
-
-      // MG: hold LMB/Space. Sustained fire heats the gun; at GUN_MAX_TEMP it
-      // overheates and cannot fire until fully cool.
-      mgCooldown -= dt;
-      if (control.firing && mgCooldown <= 0 && !gunOverheated) {
-        mgCooldown = MG_FIRE_INTERVAL;
-        gunTemp = Math.min(GUN_MAX_TEMP, gunTemp + GUN_HEAT_PER_SHOT);
-        if (gunTemp >= GUN_MAX_TEMP) gunOverheated = true;
-        tracers.fire(tank, tank.muzzleWorld(_muzzle), tank.barrelDir(_barrel), MG_DAMAGE_PLAYER);
-        flashes.flash(_muzzle);
-        EngineAudio.mgFire(0);
-      }
-      if (!control.firing || gunOverheated) {
-        gunTemp = Math.max(0, gunTemp - GUN_COOL_RATE * dt);
-        if (gunOverheated && gunTemp <= 0) gunOverheated = false;
-      }
-
-      // Main gun: hold RMB/X. One shell in the breech; it reloads over
-      // SHELL_RELOAD, so holding the button fires again once it is ready.
-      shellReload = Math.max(0, shellReload - dt);
-      if (control.shellFiring && shellReload <= 0) {
-        if (shells.fire(tank, tank.muzzleWorld(_muzzle), tank.barrelDir(_barrel))) {
-          shellReload = SHELL_RELOAD;
-          flashes.flash(_muzzle);
-          EngineAudio.shellLaunch(0);
-          chaseCam.shake = Math.max(chaseCam.shake, CAM_SHAKE_FIRE);
+        // Garage (M5): while the player's center is inside the pad, repair over
+        // time (player only; AI tanks drive through it unchanged).
+        inGarage =
+          tank.alive &&
+          tank.position.x > BASE.x0 && tank.position.x < BASE.x1 &&
+          tank.position.z > BASE.z0 && tank.position.z < BASE.z1;
+        if (inGarage && tank.hp < tank.maxHp) {
+          tank.hp = Math.min(tank.maxHp, tank.hp + BASE_REPAIR_RATE * dt);
         }
+
+        // MG: hold LMB/Space. Sustained fire heats the gun; at GUN_MAX_TEMP it
+        // overheates and cannot fire until fully cool.
+        mgCooldown -= dt;
+        if (control.firing && mgCooldown <= 0 && !gunOverheated) {
+          mgCooldown = MG_FIRE_INTERVAL;
+          gunTemp = Math.min(GUN_MAX_TEMP, gunTemp + GUN_HEAT_PER_SHOT);
+          if (gunTemp >= GUN_MAX_TEMP) gunOverheated = true;
+          tracers.fire(tank, tank.muzzleWorld(_muzzle), tank.barrelDir(_barrel), MG_DAMAGE_PLAYER);
+          flashes.flash(_muzzle);
+          EngineAudio.mgFire(0);
+        }
+        if (!control.firing || gunOverheated) {
+          gunTemp = Math.max(0, gunTemp - GUN_COOL_RATE * dt);
+          if (gunOverheated && gunTemp <= 0) gunOverheated = false;
+        }
+
+        // Main gun: hold RMB/X. One shell in the breech; it reloads over
+        // SHELL_RELOAD, so holding the button fires again once it is ready.
+        shellReload = Math.max(0, shellReload - dt);
+        if (control.shellFiring && shellReload <= 0) {
+          if (shells.fire(tank, tank.muzzleWorld(_muzzle), tank.barrelDir(_barrel))) {
+            shellReload = SHELL_RELOAD;
+            flashes.flash(_muzzle);
+            EngineAudio.shellLaunch(0);
+            chaseCam.shake = Math.max(chaseCam.shake, CAM_SHAKE_FIRE);
+          }
+        }
+      } else {
+        inGarage = false; // the garage hint is tank-only (M9)
+        const pc = planeController.update(dt, plane, ctx);
+        plane.update(dt, pc);
+        handlePlaneGrounding(dt);
+        emitDamageSmoke(plane, dt);
+        focus.copy(plane.position);
+
+        // Cannon: hold Space. Sustained fire heats the gun; at GUN_MAX_TEMP it
+        // overheates and cannot fire until fully cool.
+        mgCooldown -= dt;
+        if (pc.firing && mgCooldown <= 0 && !gunOverheated) {
+          mgCooldown = PLAYER_FIRE_INTERVAL;
+          gunTemp = Math.min(GUN_MAX_TEMP, gunTemp + GUN_HEAT_PER_SHOT);
+          if (gunTemp >= GUN_MAX_TEMP) gunOverheated = true;
+          projectiles.fire(plane, plane.muzzleWorld(_muzzle), plane.forward, PLAYER_BULLET_DAMAGE, "soft");
+          flashes.flash(_muzzle);
+          EngineAudio.fire(0);
+        }
+        if (!pc.firing || gunOverheated) {
+          gunTemp = Math.max(0, gunTemp - GUN_COOL_RATE * dt);
+          if (gunOverheated && gunTemp <= 0) gunOverheated = false;
+        }
+
+        // Rockets: hold X. Finite ammo, earned by dealing damage.
+        rocketFireCooldown -= dt;
+        if (pc.rocketFiring && rocketFireCooldown <= 0 && rocketAmmo > 0) {
+          if (rockets.fire(plane, plane.muzzleWorld(_muzzle), plane.forward, "hard")) {
+            rocketAmmo--;
+            rocketFireCooldown = ROCKET_FIRE_INTERVAL;
+            flashes.flash(_muzzle);
+            EngineAudio.rocketLaunch(0);
+          }
+        }
+
+        // Player plane vs CPU plane (body collision) and ground/scenery crash.
+        if (plane.alive) checkPlaneRam();
+        if (plane.alive) checkPlaneCollisions();
       }
 
       // AI fleet: AI -> physics -> firing -> respawn (M4).
@@ -1811,13 +2119,13 @@ const Game = (() => {
         if (ac.firing) {
           tracers.fire(cp, cp.muzzleWorld(_muzzle), cp.barrelDir(_barrel), MG_DAMAGE_AI);
           flashes.flash(_muzzle);
-          EngineAudio.mgFire(cp.position.distanceTo(tank.position));
+          EngineAudio.mgFire(cp.position.distanceTo(player.position));
         }
         // Rare AI shells: unguided splash on a ballistic arc (dir from the AI).
         if (ac.shellFiring) {
           if (shells.fire(cp, cp.muzzleWorld(_muzzle), slot.ai.shellDir)) {
             flashes.flash(_muzzle);
-            EngineAudio.shellLaunch(cp.position.distanceTo(tank.position));
+            EngineAudio.shellLaunch(cp.position.distanceTo(player.position));
           }
         }
       }
@@ -1838,7 +2146,7 @@ const Game = (() => {
         if (rc.firing && r.alive) {
           tracers.fire(r, r.muzzleWorld(_muzzle), slot.ai.aimDir, MG_DAMAGE_AI);
           flashes.flash(_muzzle);
-          EngineAudio.mgFire(r.position.distanceTo(tank.position));
+          EngineAudio.mgFire(r.position.distanceTo(player.position));
         }
       }
 
@@ -1856,13 +2164,13 @@ const Game = (() => {
         if (ac.firing) {
           projectiles.fire(cp, cp.muzzleWorld(_muzzle), cp.forward, PLANE_BULLET_DAMAGE, "soft");
           flashes.flash(_muzzle);
-          EngineAudio.fire(cp.position.distanceTo(tank.position));
+          EngineAudio.fire(cp.position.distanceTo(player.position));
         }
         // Rare CPU rockets: unguided splash on a ballistic arc (dir from the AI).
         if (ac.rocketFiring) {
           if (rockets.fire(cp, cp.muzzleWorld(_muzzle), slot.ai.rocketDir, "hard")) {
             flashes.flash(_muzzle);
-            EngineAudio.rocketLaunch(cp.position.distanceTo(tank.position));
+            EngineAudio.rocketLaunch(cp.position.distanceTo(player.position));
           }
         }
         // A plane that hits the ground (or scenery) is destroyed.
@@ -1878,11 +2186,11 @@ const Game = (() => {
       // AA guns: engage any in-range plane, launch tracers (and rare rockets).
       const aaShots = aaGuns.update(dt, ctx.planes);
       for (const g of aaShots.fired) {
-        EngineAudio.fire(g.position.distanceTo(tank.position));
+        EngineAudio.fire(g.position.distanceTo(player.position));
         flashes.flash(g.muzzleWorld(_muzzle));
       }
       for (const g of aaShots.rocketFired) {
-        EngineAudio.rocketLaunch(g.position.distanceTo(tank.position));
+        EngineAudio.rocketLaunch(g.position.distanceTo(player.position));
         flashes.flash(g.muzzleWorld(_muzzle));
       }
 
@@ -1911,7 +2219,7 @@ const Game = (() => {
 
         // Shells (tank main gun): integrate (arc), detonate (splash), boom.
         shells.update(dt, ctx.units, terrain, aaGuns.guns, (pos) => {
-          EngineAudio.shellBoom(pos.distanceTo(tank.position));
+          EngineAudio.shellBoom(pos.distanceTo(player.position));
           flashes.flash(pos);
           spawnSmoke(pos, {
             count: 26, size: 2.6, color: 0x3a3a3a, opacity: 0.85, life: 1.4,
@@ -1924,7 +2232,7 @@ const Game = (() => {
 
         // Rockets (plane + AA gun): integrate (arc), detonate (splash), boom.
         rockets.update(dt, ctx.units, terrain, aaGuns.guns, (pos) => {
-          EngineAudio.rocketBoom(pos.distanceTo(tank.position));
+          EngineAudio.rocketBoom(pos.distanceTo(player.position));
           flashes.flash(pos);
           spawnSmoke(pos, {
             count: 26, size: 2.6, color: 0x3a3a3a, opacity: 0.85, life: 1.4,
@@ -1933,43 +2241,58 @@ const Game = (() => {
         });
 
         // Player destroyed? (the reason was set by the killer: gunfire,
-        // a ram, or an obstacle).
-        if (!tank.alive) destroyPlayer(destroyReason || "You were destroyed.");
+        // a ram, an obstacle, or a plane crash/collision).
+        if (vehicle === VEHICLE_PLANE) {
+          if (!plane.alive) destroyPlayer(destroyReason || "You were shot down.");
+        } else {
+          if (!tank.alive) destroyPlayer(destroyReason || "You were destroyed.");
+        }
       }
 
       if (state === "playing") {
-        distance += Math.abs(tank.speed) * dt;
-        chaseCam.update(dt, tank);
+        distance += (vehicle === VEHICLE_PLANE ? plane.speed : Math.abs(tank.speed)) * dt;
+        if (vehicle === VEHICLE_PLANE) planeCam.update(dt, plane);
+        else chaseCam.update(dt, tank);
         terrain.update(focus);
         scenery.update(dt, focus);
       }
     } else if (state === "destroyed") {
       // Frozen: keep the last camera, let the world stay alive, and show the
       // overlay once the impact has registered.
-      scenery.update(dt, tank.position);
-      chaseCam.update(dt, tank);
+      if (vehicle === VEHICLE_PLANE) {
+        scenery.update(dt, plane.position);
+        planeCam.update(dt, plane);
+      } else {
+        scenery.update(dt, tank.position);
+        chaseCam.update(dt, tank);
+      }
       if (overlayDelay > 0) {
         overlayDelay -= dt;
         if (overlayDelay <= 0) {
           const km = (distance / 1000).toFixed(1);
           const score = damageDealt + kills * KILL_SCORE;
+          const isPlane = vehicle === VEHICLE_PLANE;
           showOverlay(
-            "DESTROYED",
+            isPlane ? "CRASHED" : "DESTROYED",
             destroyReason +
-              "<br />You drove " +
+              "<br />You " +
+              (isPlane ? "flew" : "drove") +
+              " " +
               km +
               " km. Kills: " +
               kills +
               ". Score: " +
               score +
               ".",
-            "Drive again (R)"
+            isPlane ? "Fly again (R)" : "Drive again (R)"
           );
         }
       }
     } else if (state === "ready") {
-      // Idle scene: world gently alive, camera orbiting the map center.
-      updateReadyCamera(dt);
+      // Idle scene: world gently alive. The tank orbits the map center; the
+      // plane idles (prop ticking) with the camera snapped behind it (M9).
+      if (vehicle === VEHICLE_TANK) updateReadyCamera(dt);
+      else plane.idleProp(dt);
       terrain.update(focus);
       scenery.update(dt, focus);
     } else if (state === "paused") {
@@ -1994,7 +2317,16 @@ const Game = (() => {
     // AA searchlights: purely visual, fade in/out with the night mix.
     aaGuns.updateBeams(dt, nightMix);
 
-    EngineAudio.update(dt, tank, state, state === "playing" ? playerController.control.throttle : 0);
+    EngineAudio.update(
+      dt,
+      player,
+      state,
+      state === "playing"
+        ? vehicle === VEHICLE_PLANE
+          ? plane.throttle
+          : playerController.control.throttle
+        : 0
+    );
     Music.update(dt, state);
 
     // Effects + HUD (M6: visible while playing and after destruction).
@@ -2006,6 +2338,11 @@ const Game = (() => {
     updateCrosshair();
     // Garage hint: visible while the player tank is inside the pad (M5).
     garageHint.classList.toggle("hidden", !(state === "playing" && inGarage));
+    // Landing hint: visible briefly after a clean plane touchdown (M9).
+    if (landingHintTimer > 0) {
+      landingHintTimer -= dt;
+      landingHint.classList.toggle("hidden", landingHintTimer <= 0);
+    }
 
     // Keep the sky dome centered on the camera; otherwise its far side gets
     // clipped by the far plane once the camera moves farther than
@@ -2031,13 +2368,8 @@ const Game = (() => {
   buildWorld();
   timeToggle.textContent = nightMode ? "NIGHT" : "DAY";
   applyEnvironment(nightMix);
-  showOverlay(
-    "ARCADE TANK",
-    "You&rsquo;re a lone tank in a free-for-all.<br />" +
-      "Gun down the enemy fleet, arc your shells, retreat to the garage to repair." +
-      (bestScore > 0 ? "<br /><br />BEST SCORE: " + bestScore : ""),
-    "Drive"
-  );
+  showOverlay("ARCADE TANK", "", "Drive");
+  updateTitleOverlay(); // set the text/button for the selected vehicle (M9)
   requestAnimationFrame(frame);
 
   return { onKeyDown, onPointerUnlock };

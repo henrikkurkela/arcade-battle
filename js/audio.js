@@ -25,6 +25,12 @@ const EngineAudio = (() => {
   const ENGINE_GAIN_MAX = 0.6; // in-game at top speed
   const ENGINE_EASE = 2.2; // frequency/gain easing rate (per second)
 
+  // --- Prop tuning (plane vehicle; ported from the Arcade Plane game) --------
+  const PROP_IDLE_RPM = 1200;
+  const PROP_FULL_RPM = 2800;
+  const PROP_BLADES = 2;
+  const PROP_RPM_EASE = 2.2; // rpm easing rate (per second)
+
   const MASTER_VOL = 0.4;
 
   let ctx = null;
@@ -40,6 +46,13 @@ const EngineAudio = (() => {
   let muted = false;
   let sfxVol = 1; // user SFX volume, 0..1 (engine + one-shot effects)
   let started = false;
+  let engineMode = "diesel"; // "diesel" (tank) or "prop" (plane)
+  let propGain = null;
+  let propOsc1 = null;
+  let propOsc2 = null;
+  let propLowpass = null;
+  let propBandpass = null;
+  let propRpm = 0;
 
   function makeNoiseBuffer() {
     const len = ctx.sampleRate; // 1 second
@@ -104,6 +117,53 @@ const EngineAudio = (() => {
     noise.connect(bandpass);
     bandpass.connect(gN);
     noise.start();
+
+    // --- prop "thump" (plane vehicle): two detuned sawtooths at the blade-pass
+    // frequency (RPM * blades / 60) and its octave, through a lowpass --------
+    propGain = ctx.createGain();
+    propGain.gain.value = 0;
+    propGain.connect(sfxGain);
+
+    propLowpass = ctx.createBiquadFilter();
+    propLowpass.type = "lowpass";
+    propLowpass.frequency.value = 400;
+    propLowpass.Q.value = 0.7;
+    propLowpass.connect(propGain);
+
+    const pg1 = ctx.createGain();
+    pg1.gain.value = 0.5;
+    pg1.connect(propLowpass);
+    const pg2 = ctx.createGain();
+    pg2.gain.value = 0.22;
+    pg2.connect(propLowpass);
+
+    propOsc1 = ctx.createOscillator();
+    propOsc1.type = "sawtooth";
+    propOsc1.frequency.value = 40;
+    propOsc1.connect(pg1);
+    propOsc1.start();
+
+    propOsc2 = ctx.createOscillator();
+    propOsc2.type = "sawtooth";
+    propOsc2.frequency.value = 81; // detuned octave
+    propOsc2.connect(pg2);
+    propOsc2.start();
+
+    // --- prop "whoosh": looped noise through a bandpass tracking RPM ---------
+    propBandpass = ctx.createBiquadFilter();
+    propBandpass.type = "bandpass";
+    propBandpass.frequency.value = 300;
+    propBandpass.Q.value = 0.8;
+    const pgN = ctx.createGain();
+    pgN.gain.value = 0.35;
+    pgN.connect(propGain);
+
+    const propNoise = ctx.createBufferSource();
+    propNoise.buffer = makeNoiseBuffer();
+    propNoise.loop = true;
+    propNoise.connect(propBandpass);
+    propBandpass.connect(pgN);
+    propNoise.start();
   }
 
   /** Create/resume the context. Must be called from a user gesture. */
@@ -124,33 +184,64 @@ const EngineAudio = (() => {
     if (ctx.state === "suspended") ctx.resume();
   }
 
-  /** Per-frame update: the diesel rumble scales with throttle and speed.
-   *  `state` is the game state string; `throttle` is the player's throttle
-   *  input (-1..1, 0 outside of playing). */
-  function update(dt, tank, state, throttle) {
+  /** Per-frame update: the active engine voice scales with throttle and
+   *  speed (diesel for the tank, prop for the plane). `unit` is the player's
+   *  vehicle; `state` is the game state string; `throttle` is the player's
+   *  throttle input (-1..1 for the tank, 0..1 for the plane; 0 outside of
+   *  playing). */
+  function update(dt, unit, state, throttle) {
     if (!started) return;
 
-    let targetFreq = 0;
-    let targetGain = 0;
-    if (state === "ready") {
-      targetFreq = ENGINE_FREQ_MIN;
-      targetGain = ENGINE_GAIN_IDLE;
-    } else if (state === "playing" && tank) {
-      const speedRatio = clamp(Math.abs(tank.speed) / MAX_SPEED_FWD, 0, 1);
-      // Throttle and speed both rev the engine: at a standstill the throttle
-      // alone can rev it, and coasting keeps a little rumble under the wheels.
-      const drive = clamp(Math.max(speedRatio, Math.abs(clamp(throttle || 0, -1, 1)) * 0.8), 0, 1);
-      targetFreq = lerp(ENGINE_FREQ_MIN, ENGINE_FREQ_MAX, drive);
-      targetGain = lerp(ENGINE_GAIN_MIN, ENGINE_GAIN_MAX, drive);
-    }
-    // paused / destroyed: frequency and gain ease to 0 (engine cut).
+    if (engineMode === "diesel") {
+      let targetFreq = 0;
+      let targetGain = 0;
+      if (state === "ready") {
+        targetFreq = ENGINE_FREQ_MIN;
+        targetGain = ENGINE_GAIN_IDLE;
+      } else if (state === "playing" && unit) {
+        const speedRatio = clamp(Math.abs(unit.speed) / MAX_SPEED_FWD, 0, 1);
+        // Throttle and speed both rev the engine: at a standstill the throttle
+        // alone can rev it, and coasting keeps a little rumble under the wheels.
+        const drive = clamp(Math.max(speedRatio, Math.abs(clamp(throttle || 0, -1, 1)) * 0.8), 0, 1);
+        targetFreq = lerp(ENGINE_FREQ_MIN, ENGINE_FREQ_MAX, drive);
+        targetGain = lerp(ENGINE_GAIN_MIN, ENGINE_GAIN_MAX, drive);
+      }
+      // paused / destroyed: frequency and gain ease to 0 (engine cut).
 
-    engineFreq = easeToward(engineFreq, targetFreq, ENGINE_EASE, dt);
-    osc1.frequency.value = Math.max(1, engineFreq);
-    osc2.frequency.value = Math.max(2, engineFreq * 2.03);
-    lowpass.frequency.value = 120 + engineFreq * 3;
-    bandpass.frequency.value = 100 + engineFreq * 2.5;
-    engineGain.gain.value = easeToward(engineGain.gain.value, targetGain, ENGINE_EASE, dt);
+      engineFreq = easeToward(engineFreq, targetFreq, ENGINE_EASE, dt);
+      osc1.frequency.value = Math.max(1, engineFreq);
+      osc2.frequency.value = Math.max(2, engineFreq * 2.03);
+      lowpass.frequency.value = 120 + engineFreq * 3;
+      bandpass.frequency.value = 100 + engineFreq * 2.5;
+      engineGain.gain.value = easeToward(engineGain.gain.value, targetGain, ENGINE_EASE, dt);
+      propGain.gain.value = easeToward(propGain.gain.value, 0, PROP_RPM_EASE, dt);
+    } else {
+      let targetRpm = 0;
+      let targetGain = 0;
+      if (state === "ready") {
+        targetRpm = PROP_IDLE_RPM;
+        targetGain = 0.32;
+      } else if (state === "playing" && unit) {
+        targetRpm = PROP_IDLE_RPM + (PROP_FULL_RPM - PROP_IDLE_RPM) * clamp(unit.throttle, 0, 1);
+        targetGain = 0.2 + 0.55 * clamp(propRpm / PROP_FULL_RPM, 0, 1);
+      }
+      // paused / destroyed: rpm and gain ease to 0 (engine cut).
+
+      propRpm = easeToward(propRpm, targetRpm, PROP_RPM_EASE, dt);
+      const bladePass = (propRpm / 60) * PROP_BLADES; // Hz
+      propOsc1.frequency.value = Math.max(1, bladePass);
+      propOsc2.frequency.value = Math.max(2, bladePass * 2.03);
+      propLowpass.frequency.value = 200 + bladePass * 6;
+      propBandpass.frequency.value = 120 + bladePass * 9;
+      propGain.gain.value = easeToward(propGain.gain.value, targetGain, PROP_RPM_EASE, dt);
+      engineGain.gain.value = easeToward(engineGain.gain.value, 0, ENGINE_EASE, dt);
+    }
+  }
+
+  /** Select the engine voice: "diesel" (tank) or "prop" (plane). The
+   *  inactive voice eases to silence on the next update(). */
+  function setEngineMode(mode) {
+    engineMode = mode === "prop" ? "prop" : "diesel";
   }
 
   /** One-shot MG report: a short falling-bandpass noise crack plus a low
@@ -562,7 +653,10 @@ const EngineAudio = (() => {
   // Background tabs stop requestAnimationFrame but not audio: silence the
   // engine while hidden; the next visible frame's update() restores it.
   document.addEventListener("visibilitychange", () => {
-    if (engineGain && document.hidden) engineGain.gain.value = 0;
+    if (document.hidden) {
+      if (engineGain) engineGain.gain.value = 0;
+      if (propGain) propGain.gain.value = 0;
+    }
   });
 
   /** The shared AudioContext (null until start() succeeds). Other audio
@@ -580,6 +674,7 @@ const EngineAudio = (() => {
   return {
     start,
     update,
+    setEngineMode,
     toggleMute,
     setMuted,
     isMuted,
