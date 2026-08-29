@@ -10,6 +10,8 @@
 
 const DEBRIS_PER_KILL = 10; // pieces per destroyed tank
 const DEBRIS_POOL_SIZE = 96; // pooled meshes (~9 simultaneous kills in flight)
+const FOLIAGE_PER_FELL = 12; // pieces per felled tree
+const FOLIAGE_POOL_SIZE = 48; // pooled meshes (~4 simultaneous fellings in flight)
 const DEBRIS_GRAVITY = 9.8;
 const DEBRIS_AIR_DRAG = 0.5; // per second
 const DEBRIS_KICK = 12; // m/s max random scatter speed
@@ -51,14 +53,57 @@ class Debris {
         restTimer: 0,
       });
     }
+    // Foliage chunks for felled trees: leaf clumps, a pine tuft, a twig.
+    this.foliage = [];
+    this._nextFreeF = 0;
+    const fGeos = [
+      new THREE.BoxGeometry(0.34, 0.09, 0.3), // leaf clump
+      new THREE.ConeGeometry(0.18, 0.5, 6), // pine tuft
+      new THREE.BoxGeometry(0.07, 0.5, 0.07), // twig
+      new THREE.BoxGeometry(0.28, 0.1, 0.24), // leaf clump
+    ];
+    const fMats = [
+      new THREE.MeshLambertMaterial({ color: 0x2d5a27 }), // pine green
+      new THREE.MeshLambertMaterial({ color: 0x3a7a2e }), // broadleaf green
+      new THREE.MeshLambertMaterial({ color: 0x6b4226 }), // bark brown
+      new THREE.MeshLambertMaterial({ color: 0x8a6a3a }), // light wood
+    ];
+    for (let i = 0; i < FOLIAGE_POOL_SIZE; i++) {
+      const mesh = new THREE.Mesh(fGeos[i % fGeos.length], fMats[i % fMats.length]);
+      mesh.visible = false;
+      mesh.castShadow = true;
+      scene.add(mesh);
+      this.foliage.push({
+        mesh,
+        active: false,
+        pos: new THREE.Vector3(),
+        vel: new THREE.Vector3(),
+        angVel: new THREE.Vector3(),
+        quat: new THREE.Quaternion(),
+        scale: 1,
+        resting: false,
+        restTimer: 0,
+      });
+    }
     this._axis = new THREE.Vector3();
     this._q = new THREE.Quaternion();
   }
 
-  /** Spawn a burst at `pos`, inheriting the tank's velocity `vel`. */
+  /** Spawn a tank-destruction burst at `pos`, inheriting the tank's
+   *  velocity `vel`. */
   spawn(pos, vel) {
-    for (let i = 0; i < DEBRIS_PER_KILL; i++) {
-      const e = this._acquire();
+    this._burst(this.pool, "_nextFree", DEBRIS_PER_KILL, pos, vel);
+  }
+
+  /** Spawn a felled-tree burst at `pos`, inheriting the tank's velocity
+   *  `vel`. */
+  spawnFoliage(pos, vel) {
+    this._burst(this.foliage, "_nextFreeF", FOLIAGE_PER_FELL, pos, vel);
+  }
+
+  _burst(list, idx, count, pos, vel) {
+    for (let i = 0; i < count; i++) {
+      const e = this._acquire(list, idx);
       if (!e) return; // pool exhausted: drop the extra piece
       e.active = true;
       e.resting = false;
@@ -88,11 +133,11 @@ class Debris {
     }
   }
 
-  _acquire() {
-    for (let i = 0; i < this.pool.length; i++) {
-      const e = this.pool[(this._nextFree + i) % this.pool.length];
+  _acquire(list, idx) {
+    for (let i = 0; i < list.length; i++) {
+      const e = list[(this[idx] + i) % list.length];
       if (e.active) continue;
-      this._nextFree = (this._nextFree + i + 1) % this.pool.length;
+      this[idx] = (this[idx] + i + 1) % list.length;
       return e;
     }
     return null;
@@ -100,45 +145,52 @@ class Debris {
 
   /** Integrate: gravity + drag in flight, rest + shrink on the ground. */
   update(dt, terrain) {
-    for (const e of this.pool) {
-      if (!e.active) continue;
-      if (e.resting) {
-        e.restTimer += dt;
-        if (e.restTimer > DEBRIS_REST_TIME) {
-          e.scale = Math.max(0, e.scale - dt / DEBRIS_FADE_TIME);
-          if (e.scale <= 0) {
-            e.active = false;
-            e.mesh.visible = false;
-            continue;
-          }
-        }
-      } else {
-        e.vel.y -= DEBRIS_GRAVITY * dt;
-        e.vel.multiplyScalar(Math.max(0, 1 - DEBRIS_AIR_DRAG * dt));
-        e.pos.addScaledVector(e.vel, dt);
-        if (e.pos.y <= terrain.heightAt(e.pos.x, e.pos.z)) {
-          e.pos.y = terrain.heightAt(e.pos.x, e.pos.z);
-          e.resting = true;
-          e.vel.set(0, 0, 0);
-          e.angVel.set(0, 0, 0);
+    for (const e of this.pool) this._step(e, dt, terrain);
+    for (const e of this.foliage) this._step(e, dt, terrain);
+  }
+
+  _step(e, dt, terrain) {
+    if (!e.active) return;
+    if (e.resting) {
+      e.restTimer += dt;
+      if (e.restTimer > DEBRIS_REST_TIME) {
+        e.scale = Math.max(0, e.scale - dt / DEBRIS_FADE_TIME);
+        if (e.scale <= 0) {
+          e.active = false;
+          e.mesh.visible = false;
+          return;
         }
       }
-      // Tumble.
-      const w = e.angVel.length();
-      if (w > 1e-4) {
-        this._axis.copy(e.angVel).divideScalar(w);
-        this._q.setFromAxisAngle(this._axis, w * dt);
-        e.quat.premultiply(this._q);
+    } else {
+      e.vel.y -= DEBRIS_GRAVITY * dt;
+      e.vel.multiplyScalar(Math.max(0, 1 - DEBRIS_AIR_DRAG * dt));
+      e.pos.addScaledVector(e.vel, dt);
+      if (e.pos.y <= terrain.heightAt(e.pos.x, e.pos.z)) {
+        e.pos.y = terrain.heightAt(e.pos.x, e.pos.z);
+        e.resting = true;
+        e.vel.set(0, 0, 0);
+        e.angVel.set(0, 0, 0);
       }
-      e.mesh.position.copy(e.pos);
-      e.mesh.quaternion.copy(e.quat);
-      e.mesh.scale.setScalar(e.scale);
     }
+    // Tumble.
+    const w = e.angVel.length();
+    if (w > 1e-4) {
+      this._axis.copy(e.angVel).divideScalar(w);
+      this._q.setFromAxisAngle(this._axis, w * dt);
+      e.quat.premultiply(this._q);
+    }
+    e.mesh.position.copy(e.pos);
+    e.mesh.quaternion.copy(e.quat);
+    e.mesh.scale.setScalar(e.scale);
   }
 
   /** Deactivate everything (used on restart). */
   clear() {
     for (const e of this.pool) {
+      e.active = false;
+      e.mesh.visible = false;
+    }
+    for (const e of this.foliage) {
       e.active = false;
       e.mesh.visible = false;
     }

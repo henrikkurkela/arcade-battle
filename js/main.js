@@ -371,6 +371,7 @@ const Game = (() => {
   const _barrel = new THREE.Vector3();
   const _aimPt = new THREE.Vector3();
   const _smokePt = new THREE.Vector3();
+  const _foliagePt = new THREE.Vector3(); // felled-tree burst point (mid-trunk)
   const _prevPos = new THREE.Vector3(); // position before a tank's movement step (M5)
   const _obHits = []; // scenery items overlapping a tank (M5, reused per call)
 
@@ -868,6 +869,11 @@ const Game = (() => {
     if (felled.length) {
       if (t === tank) chaseCam.shake = Math.max(chaseCam.shake, CAM_SHAKE_FELL);
       EngineAudio.treeThud(t.position.distanceTo(tank.position));
+      for (const item of felled) {
+        _foliagePt.copy(item.mesh.position);
+        _foliagePt.y += 2.5; // mid-trunk: the burst reads as the tree coming apart
+        debris.spawnFoliage(_foliagePt, t.velocity);
+      }
       // Only felled trees in the way: plow through with a speed cut.
       if (!hit.length) t.speed *= 1 - TREE_FELL_SPEED_CUT;
     }
