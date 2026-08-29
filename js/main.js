@@ -107,6 +107,44 @@ const Game = (() => {
   const RIFLEMAN_MAX = 16; // max riflemen
   const RIFLEMAN_RESPAWN_DELAY = 3; // s before a downed rifleman reappears
 
+  // --- CPU plane fleet (M8) --------------------------------------------------
+  // All planes are CPU (the player drives the tank). They dogfight each other
+  // and the ground forces; the player can shoot them down too.
+  const PLANE_COUNT = 4; // default fleet size (menu allows 0-16)
+  const PLANE_MAX = 16; // max planes
+  const PLANE_RESPAWN_DELAY = 3; // s before a downed plane reappears
+  // SOFT damage (cannon). A plane's PLANE_SOFT_ARMOR (1) cancels it, so a plane
+  // takes the full 7 per tracer; the same tracer chews through ground armor.
+  const PLANE_BULLET_DAMAGE = 7; // raw damage per CPU plane tracer
+  // Plane liveries + callsigns (16, matching the menu's 0-16 range).
+  const PLANE_LIVERIES = [
+    0x3a4150, 0x556b2f, 0x8a4b3a, 0x3f5d7a, 0x6b5b95, 0x2f6f6f,
+    0xb3372f, 0xc96a2b, 0xbf9b30, 0x7a9a2f, 0x3f7a33, 0x3585a0,
+    0x2a3f6e, 0x8e3b6e, 0x7a2f4f, 0x9a7a4a,
+  ];
+  const PLANE_NAMES = {
+    0x3a4150: "Slate Phantom",
+    0x556b2f: "Olive Viper",
+    0x8a4b3a: "Rust Raptor",
+    0x3f5d7a: "Blue Fury",
+    0x6b5b95: "Purple Avenger",
+    0x2f6f6f: "Teal Talon",
+    0xb3372f: "Red Baron",
+    0xc96a2b: "Orange Raider",
+    0xbf9b30: "Gold Falcon",
+    0x7a9a2f: "Lime Lancer",
+    0x3f7a33: "Green Hornet",
+    0x3585a0: "Cyan Corsair",
+    0x2a3f6e: "Navy Nightjar",
+    0x8e3b6e: "Magenta Mosquito",
+    0x7a2f4f: "Maroon Mauler",
+    0x9a7a4a: "Sand Scorpion",
+  };
+
+  // --- AA gun ring (M8) ------------------------------------------------------
+  const AA_DEFAULT = 16; // default turrets (menu allows 0-16; max = AA_COUNT)
+  const AA_RESPAWN = 0; // (unused: guns re-enable on a timer, see aagun.js)
+
   // --- Garage base (M5) ------------------------------------------------------
   const BASE_HALF = 20; // m; the pad is 40 x 40 centered on the spawn point
   const BASE_REPAIR_RATE = 20; // HP/s while the player tank is inside (player only)
@@ -153,6 +191,16 @@ const Game = (() => {
   const rifleCountEl = document.getElementById("rifle-count");
   const rifleMinus = document.getElementById("rifle-minus");
   const riflePlus = document.getElementById("rifle-plus");
+  const planeControl = document.getElementById("plane-control");
+  const planeLabel = document.getElementById("plane-label");
+  const planeCountEl = document.getElementById("plane-count");
+  const planeMinus = document.getElementById("plane-minus");
+  const planePlus = document.getElementById("plane-plus");
+  const aaControl = document.getElementById("aa-control");
+  const aaLabel = document.getElementById("aa-label");
+  const aaCountEl = document.getElementById("aa-count");
+  const aaMinus = document.getElementById("aa-minus");
+  const aaPlus = document.getElementById("aa-plus");
   const musicCountEl = document.getElementById("music-count");
   const musicMinus = document.getElementById("music-minus");
   const musicPlus = document.getElementById("music-plus");
@@ -362,6 +410,10 @@ const Game = (() => {
   // --- Combat (M3) -----------------------------------------------------------
   let tracers = null;
   let shells = null;
+  let projectiles = null; // M8: pooled plane/AA cannon tracers (SOFT)
+  let rockets = null; // M8: pooled plane/AA rockets (HARD)
+  let aaGuns = null; // M8: the fixed ring of AA turrets
+  let aaSmokeTimer = 0; // throttles the continuous smoke from disabled AA guns
   let debris = null; // M5: pooled tank-shaped wreck pieces
   let flashes = null;
   const smokes = [];
@@ -375,8 +427,11 @@ const Game = (() => {
   let damageDealt = 0; // total HP the player has dealt (score)
   let rifleKills = 0; // squad tally: one "RIFLEMEN" row on the scoreboard
   let rifleDamage = 0;
+  let aaKills = 0; // M8: aggregate tally for all AA guns (one "AA GUNS" row)
+  let aaDamage = 0;
   let fleet = []; // M4: [{ tank, ai, respawnTimer }]
   let rifleFleet = []; // M7: [{ unit, ai, respawnTimer }]
+  let planeFleet = []; // M8: [{ plane, ai, respawnTimer }]
   const felledTrees = []; // trees felled this run (restored on restart)
   // Scoreboard tallies for AI shooters: keyed by the Tank object, which
   // persists across respawns (the same object is reset, not rebuilt).
@@ -435,31 +490,68 @@ const Game = (() => {
     tank.callsign = "YOU";
     chaseCam = new ChaseCamera(camera);
     playerController = new PlayerController();
-    ctx = { player: tank, tanks: [tank], units: [tank], terrain };
+    ctx = { player: tank, tanks: [tank], riflemen: [], planes: [], units: [tank], terrain };
     tracers = new Tracers(scene);
     shells = new Shells(scene);
+    projectiles = new Projectiles(scene);
+    rockets = new Rockets(scene);
     debris = new Debris(scene);
     flashes = new MuzzleFlashes(scene);
-    // Both weapons share the same kill/damage attribution (M4: the AI fleet
-    // feeds the same tallies; the player's shots never hit the player).
-    tracers.onKill = shells.onKill = (owner, victim) => {
-      if (victim === tank) {
-        destroyReason = "You were shot down by " + owner.callsign + ".";
-        return; // death itself is handled via !tank.alive below
-      }
-      const slot = fleet.find((s) => s.tank === victim);
-      if (slot) {
-        destroyAiTank(slot, owner);
-        return;
-      }
-      const rslot = rifleFleet.find((s) => s.unit === victim);
-      if (rslot) destroyRifleman(rslot, owner);
-    };
-    tracers.onDamage = shells.onDamage = recordDamage;
+    // All four weapon pools share the same kill/damage attribution. The pools
+    // are target-agnostic (any weapon can hit any unit or AA gun); which units
+    // an AI *aims at* is decided by the AI, not by these callbacks.
+    for (const pool of [tracers, shells, projectiles, rockets]) {
+      pool.onKill = handleKill;
+      pool.onDamage = recordDamage;
+      pool.onAADisabled = aaKnockOut;
+    }
+    aaGuns = new AAGuns(scene, terrain, projectiles, rockets);
     spawnPlayerTank();
     // Apply the persisted counts (the player tank must exist first).
     setCpuCount(cpuCount);
     setRiflemanCount(riflemanCount);
+    setPlaneCount(planeCount);
+    setAaCount(aaCount);
+  }
+
+  /** Display name of a shooter (player, CPU tank, plane, rifleman, or AA gun)
+   *  for the message feed. */
+  function shooterName(owner) {
+    if (owner === tank) return "You";
+    if (owner.team === "aa") return "an AA gun";
+    if (owner.team === "riflemen") return "the riflemen";
+    return owner.callsign;
+  }
+
+  /** A unit was destroyed by a weapon hit: dispatch to the right handler. */
+  function handleKill(owner, victim) {
+    if (victim === tank) {
+      destroyReason = "You were shot down by " + shooterName(owner) + ".";
+      return; // death itself is handled via !tank.alive below
+    }
+    const slot = fleet.find((s) => s.tank === victim);
+    if (slot) {
+      destroyAiTank(slot, owner);
+      return;
+    }
+    const rslot = rifleFleet.find((s) => s.unit === victim);
+    if (rslot) {
+      destroyRifleman(rslot, owner);
+      return;
+    }
+    const pslot = planeFleet.find((s) => s.plane === victim);
+    if (pslot) destroyCpuPlane(pslot, owner);
+  }
+
+  /** An AA gun was knocked out: a spark + smoke burst at the structure. No
+   *  score is awarded for AA damage (only unit damage counts). */
+  function aaKnockOut(gun) {
+    flashes.flash(gun.muzzleWorld(_muzzle));
+    spawnSmoke(gun.position, {
+      count: 22, size: 2.6, color: 0x2e2e2e, opacity: 0.85, life: 1.8,
+      sx: 2.6, sy: 2.2, sz: 2.6, vh: 3, vyLo: 2.5, vyHi: 7,
+    });
+    addMessage("You knocked out an AA gun.");
   }
 
   /** Concrete pad with a yellow hazard border and painted "GARAGE" text,
@@ -562,12 +654,18 @@ const Game = (() => {
     damageDealt = 0;
     rifleKills = 0;
     rifleDamage = 0;
+    aaKills = 0;
+    aaDamage = 0;
     distance = 0;
     destroyReason = "";
     overlayDelay = 0;
     shooterStats.clear();
     tracers.clear();
     shells.clear();
+    projectiles.clear();
+    rockets.clear();
+    aaGuns.reset();
+    aaSmokeTimer = 0;
     debris.clear();
     flashes.clear();
     clearSmokes();
@@ -773,6 +871,115 @@ const Game = (() => {
       slot.respawnTimer = 0;
       respawnRifleman(slot);
     }
+  }
+
+  // --- CPU plane fleet (M8) --------------------------------------------------
+  /** Remove a Plane's mesh from the scene and free its GPU resources. */
+  function disposePlane(p) {
+    if (!p) return;
+    scene.remove(p.group);
+    p.group.traverse((o) => {
+      if (o.isMesh) {
+        o.geometry.dispose();
+        if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
+        else o.material.dispose();
+      }
+    });
+  }
+
+  /** Spawn a hostile CPU plane 400-800 m from the player, at altitude, facing it. */
+  function spawnCpuPlane(livery) {
+    const ang = Math.random() * TAU;
+    const dist = 400 + Math.random() * 400;
+    const x = tank.position.x + Math.cos(ang) * dist;
+    const z = tank.position.z + Math.sin(ang) * dist;
+    const y = terrain.heightAt(x, z) + 60 + Math.random() * 60;
+    const p = new Plane(scene, { livery });
+    // Unique team per CPU plane so their tracers hit each other (friendly fire);
+    // the shared weapon pools only skip same-team targets.
+    p.team = "plane" + (planeFleet.length + 1);
+    p.callsign = PLANE_NAMES[livery];
+    // Nose (-sin(yaw), 0, -cos(yaw)) should point at the player.
+    const yaw = Math.atan2(-(tank.position.x - x), -(tank.position.z - z));
+    p.reset(x, y, z, yaw);
+    planeFleet.push({ plane: p, ai: new PlaneAI(), respawnTimer: 0 });
+  }
+
+  /** A CPU plane was destroyed (shot down or crashed): hide it, debris burst +
+   *  smoke + boom, start the respawn timer. */
+  function destroyCpuPlane(slot, killer) {
+    const cp = slot.plane;
+    if (slot.respawnTimer > 0) return; // already destroyed, respawn pending
+    cp.alive = false;
+    cp.hp = 0;
+    cp.group.visible = false;
+    const dist = cp.position.distanceTo(tank.position);
+    debris.spawn(cp.position, cp.velocity);
+    spawnSmoke(cp.position);
+    EngineAudio.crash(dist);
+    slot.respawnTimer = PLANE_RESPAWN_DELAY;
+    slot.ai.reset();
+    if (killer === tank) {
+      kills++;
+      addMessage("You shot down " + cp.callsign);
+    } else if (killer) {
+      if (killer.team !== "aa" && killer.team !== "riflemen") shooterStatsFor(killer).kills++;
+      addMessage(shooterName(killer) + " shot down " + cp.callsign);
+    }
+  }
+
+  /** Bring a downed CPU plane back at a new spawn point (same Plane object). */
+  function respawnCpuPlane(slot) {
+    const ang = Math.random() * TAU;
+    const dist = 400 + Math.random() * 400;
+    const x = tank.position.x + Math.cos(ang) * dist;
+    const z = tank.position.z + Math.sin(ang) * dist;
+    const y = terrain.heightAt(x, z) + 60 + Math.random() * 60;
+    const yaw = Math.atan2(-(tank.position.x - x), -(tank.position.z - z));
+    slot.plane.group.visible = true;
+    slot.plane.reset(x, y, z, yaw);
+    slot.ai.reset();
+  }
+
+  /** Grow/shrink the plane fleet to `n` planes (0 = no planes). Called from the
+   *  menu and on the title screen; the fleet is adjusted live. */
+  function setPlaneCount(n) {
+    n = clamp(Math.round(n), 0, PLANE_MAX);
+    while (planeFleet.length > n) {
+      disposePlane(planeFleet.pop().plane);
+    }
+    while (planeFleet.length < n) {
+      spawnCpuPlane(PLANE_LIVERIES[planeFleet.length % PLANE_LIVERIES.length]);
+    }
+    planeCount = planeFleet.length;
+    planeCountEl.textContent = planeCount;
+    planeLabel.textContent = planeCount === 0 ? "NO PLANES" : "PLANES";
+    planeMinus.disabled = planeCount <= 0;
+    planePlus.disabled = planeCount >= PLANE_MAX;
+    saveSettings();
+    return planeCount;
+  }
+
+  /** Respawn the whole plane fleet at fresh points (restart). */
+  function respawnPlaneFleet() {
+    for (const slot of planeFleet) {
+      slot.respawnTimer = 0;
+      respawnCpuPlane(slot);
+    }
+  }
+
+  /** Grow/shrink the AA ring to `n` turrets (0 = no AA). Called from the menu
+   *  and on the title screen; the ring is adjusted live. */
+  function setAaCount(n) {
+    n = clamp(Math.round(n), 0, AA_COUNT);
+    aaCount = n;
+    aaGuns.setCount(n);
+    aaCountEl.textContent = n;
+    aaLabel.textContent = n === 0 ? "NO AA" : "AA GUNS";
+    aaMinus.disabled = n <= 0;
+    aaPlus.disabled = n >= AA_COUNT;
+    saveSettings();
+    return n;
   }
 
   /** Tank vs rifleman: a moving tank that overlaps a rifleman runs him over
@@ -987,7 +1194,10 @@ const Game = (() => {
       damageDealt += dealt;
     } else if (owner.team === "riflemen") {
       rifleDamage += dealt;
+    } else if (owner.team === "aa") {
+      aaDamage += dealt;
     } else {
+      // CPU tank or CPU plane: per-unit tally (keyed by the unit object).
       shooterStatsFor(owner).damage += dealt;
     }
     // Small camera shake when the player is hit.
@@ -1157,6 +1367,8 @@ const Game = (() => {
         JSON.stringify({
           cpuCount,
           riflemanCount,
+          planeCount,
+          aaCount,
           muted: EngineAudio.isMuted(),
           musicVol,
           sfxVol,
@@ -1176,6 +1388,14 @@ const Game = (() => {
     typeof savedSettings.riflemanCount === "number"
       ? clamp(Math.round(savedSettings.riflemanCount), 0, RIFLEMAN_MAX)
       : RIFLEMAN_COUNT;
+  let planeCount =
+    typeof savedSettings.planeCount === "number"
+      ? clamp(Math.round(savedSettings.planeCount), 0, PLANE_MAX)
+      : PLANE_COUNT;
+  let aaCount =
+    typeof savedSettings.aaCount === "number"
+      ? clamp(Math.round(savedSettings.aaCount), 0, AA_COUNT)
+      : AA_DEFAULT;
   nightMode = !!savedSettings.night;
   nightMix = nightMode ? 1 : 0;
   // Volumes are percentages (0-100); 100 = the original mix.
@@ -1228,7 +1448,12 @@ const Game = (() => {
       const s = shooterStats.get(slot.tank) || { kills: 0, damage: 0 };
       rows.push({ name: slot.tank.callsign, kills: s.kills, damage: s.damage, cls: "" });
     }
+    for (const slot of planeFleet) {
+      const s = shooterStats.get(slot.plane) || { kills: 0, damage: 0 };
+      rows.push({ name: slot.plane.callsign, kills: s.kills, damage: s.damage, cls: "plane" });
+    }
     rows.push({ name: "RIFLEMEN", kills: rifleKills, damage: rifleDamage, cls: "rifle" });
+    rows.push({ name: "AA GUNS", kills: aaKills, damage: aaDamage, cls: "aa" });
     rows.forEach((r) => (r.score = r.damage + r.kills * KILL_SCORE));
     rows.sort((a, b) => b.score - a.score);
     scoreboardBody.textContent = "";
@@ -1257,6 +1482,8 @@ const Game = (() => {
     // The count controls are only useful before a run (ready/destroyed).
     cpuControl.classList.toggle("hidden", state === "paused");
     rifleControl.classList.toggle("hidden", state === "paused");
+    planeControl.classList.toggle("hidden", state === "paused");
+    aaControl.classList.toggle("hidden", state === "paused");
     // The scoreboard only makes sense mid-run (paused) or after destruction.
     const showBoard = state === "paused" || state === "destroyed";
     scoreboard.classList.toggle("hidden", !showBoard);
@@ -1280,6 +1507,7 @@ const Game = (() => {
       spawnPlayerTank(); // fresh tank at the spawn point
       respawnFleet(); // fresh fleet at fresh points (M4)
       respawnRifleFleet(); // fresh squad at fresh points (M7)
+      respawnPlaneFleet(); // fresh plane fleet at fresh points (M8)
     }
     Input.lockPointer();
   }
@@ -1304,6 +1532,7 @@ const Game = (() => {
       spawnPlayerTank();
       respawnFleet();
       respawnRifleFleet();
+      respawnPlaneFleet();
       restoreFelledTrees();
       Input.lockPointer();
   }
@@ -1375,6 +1604,10 @@ const Game = (() => {
   cpuPlus.addEventListener("click", () => { unlockAudio(); setCpuCount(cpuCount + 1); });
   rifleMinus.addEventListener("click", () => { unlockAudio(); setRiflemanCount(riflemanCount - 1); });
   riflePlus.addEventListener("click", () => { unlockAudio(); setRiflemanCount(riflemanCount + 1); });
+  planeMinus.addEventListener("click", () => { unlockAudio(); setPlaneCount(planeCount - 1); });
+  planePlus.addEventListener("click", () => { unlockAudio(); setPlaneCount(planeCount + 1); });
+  aaMinus.addEventListener("click", () => { unlockAudio(); setAaCount(aaCount - 1); });
+  aaPlus.addEventListener("click", () => { unlockAudio(); setAaCount(aaCount + 1); });
   musicMinus.addEventListener("click", () => { unlockAudio(); setMusicVolume(musicVol - VOL_STEP); });
   musicPlus.addEventListener("click", () => { unlockAudio(); setMusicVolume(musicVol + VOL_STEP); });
   sfxMinus.addEventListener("click", () => { unlockAudio(); setSfxVolume(sfxVol - VOL_STEP); });
@@ -1499,11 +1732,18 @@ const Game = (() => {
       const aliveTanks = [tank];
       for (const slot of fleet) if (slot.tank.alive) aliveTanks.push(slot.tank);
       ctx.tanks = aliveTanks;
-      // All alive units (tanks + riflemen): the weapon pools hit-test this
-      // list, so tracers and shell splashes reach the infantry too.
+      // All alive riflemen: the weapon pools hit-test them, the AI targets them.
       const aliveRiflemen = [];
       for (const slot of rifleFleet) if (slot.unit.alive) aliveRiflemen.push(slot.unit);
-      ctx.units = aliveTanks.concat(aliveRiflemen);
+      ctx.riflemen = aliveRiflemen;
+      // All alive planes (CPU fleet): the weapon pools hit-test them, the AI
+      // targets them, and the AA guns engage them.
+      const alivePlanes = [];
+      for (const slot of planeFleet) if (slot.plane.alive) alivePlanes.push(slot.plane);
+      ctx.planes = alivePlanes;
+      // Every hittable unit (tanks + riflemen + planes): the weapon pools are
+      // target-agnostic and hit-test this list.
+      ctx.units = aliveTanks.concat(aliveRiflemen, alivePlanes);
 
       // Player: keyboard + mouse -> control -> physics.
       const control = playerController.update(dt, tank, ctx);
@@ -1602,6 +1842,63 @@ const Game = (() => {
         }
       }
 
+      // CPU plane fleet: AI -> physics -> firing -> terrain crash -> respawn (M8).
+      for (const slot of planeFleet) {
+        const cp = slot.plane;
+        if (!cp.alive) {
+          slot.respawnTimer -= dt;
+          if (slot.respawnTimer <= 0) respawnCpuPlane(slot);
+          continue;
+        }
+        const ac = slot.ai.update(dt, cp, ctx);
+        cp.update(dt, ac);
+        emitDamageSmoke(cp, dt);
+        if (ac.firing) {
+          projectiles.fire(cp, cp.muzzleWorld(_muzzle), cp.forward, PLANE_BULLET_DAMAGE, "soft");
+          flashes.flash(_muzzle);
+          EngineAudio.fire(cp.position.distanceTo(tank.position));
+        }
+        // Rare CPU rockets: unguided splash on a ballistic arc (dir from the AI).
+        if (ac.rocketFiring) {
+          if (rockets.fire(cp, cp.muzzleWorld(_muzzle), slot.ai.rocketDir, "hard")) {
+            flashes.flash(_muzzle);
+            EngineAudio.rocketLaunch(cp.position.distanceTo(tank.position));
+          }
+        }
+        // A plane that hits the ground (or scenery) is destroyed.
+        const pos = cp.position;
+        if (
+          pos.y - 1.0 < terrain.heightAt(pos.x, pos.z) ||
+          scenery.collidesWith(pos, 2.2)
+        ) {
+          destroyCpuPlane(slot, null);
+        }
+      }
+
+      // AA guns: engage any in-range plane, launch tracers (and rare rockets).
+      const aaShots = aaGuns.update(dt, ctx.planes);
+      for (const g of aaShots.fired) {
+        EngineAudio.fire(g.position.distanceTo(tank.position));
+        flashes.flash(g.muzzleWorld(_muzzle));
+      }
+      for (const g of aaShots.rocketFired) {
+        EngineAudio.rocketLaunch(g.position.distanceTo(tank.position));
+        flashes.flash(g.muzzleWorld(_muzzle));
+      }
+
+      // Disabled AA guns belch continuous smoke (throttled to ~5 puffs/s).
+      aaSmokeTimer -= dt;
+      if (aaSmokeTimer <= 0) {
+        aaSmokeTimer = 0.2;
+        for (const g of aaGuns.guns) {
+          if (!g.disabled) continue;
+          spawnSmoke(g.position, {
+            count: 6, size: 2.2, color: 0x2a2a2a, opacity: 0.7, life: 1.4,
+            sx: 2.0, sy: 1.6, sz: 2.0, vh: 1.5, vyLo: 2, vyHi: 5,
+          });
+        }
+      }
+
       // Tank vs tank: push apart + speed-based damage to both (M5).
       collideTanks(ctx.tanks);
 
@@ -1609,12 +1906,25 @@ const Game = (() => {
       runOverRiflemen(ctx.tanks, aliveRiflemen);
 
       if (state === "playing") {
-        // Tracers: integrate, collide, damage.
-        tracers.update(dt, ctx.units, terrain);
+        // Tracers (tank MG + rifleman): integrate, collide, damage.
+        tracers.update(dt, ctx.units, terrain, aaGuns.guns);
 
-        // Shells: integrate (arc), detonate (splash), boom + blast effect.
-        shells.update(dt, ctx.units, terrain, (pos) => {
+        // Shells (tank main gun): integrate (arc), detonate (splash), boom.
+        shells.update(dt, ctx.units, terrain, aaGuns.guns, (pos) => {
           EngineAudio.shellBoom(pos.distanceTo(tank.position));
+          flashes.flash(pos);
+          spawnSmoke(pos, {
+            count: 26, size: 2.6, color: 0x3a3a3a, opacity: 0.85, life: 1.4,
+            sx: 2.5, sy: 1.5, sz: 2.5, vh: 9, vyLo: 1, vyHi: 5,
+          });
+        });
+
+        // Cannon tracers (plane + AA gun): integrate, collide, damage.
+        projectiles.update(dt, ctx.units, terrain, aaGuns.guns);
+
+        // Rockets (plane + AA gun): integrate (arc), detonate (splash), boom.
+        rockets.update(dt, ctx.units, terrain, aaGuns.guns, (pos) => {
+          EngineAudio.rocketBoom(pos.distanceTo(tank.position));
           flashes.flash(pos);
           spawnSmoke(pos, {
             count: 26, size: 2.6, color: 0x3a3a3a, opacity: 0.85, life: 1.4,
@@ -1680,6 +1990,9 @@ const Game = (() => {
         applyEnvironment(nightMix);
       }
     }
+
+    // AA searchlights: purely visual, fade in/out with the night mix.
+    aaGuns.updateBeams(dt, nightMix);
 
     EngineAudio.update(dt, tank, state, state === "playing" ? playerController.control.throttle : 0);
     Music.update(dt, state);

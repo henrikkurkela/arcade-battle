@@ -409,12 +409,19 @@ canvas {
   font-weight: 700;
 }
 
-#scoreboard tr.rifle td {
+#scoreboard tr.rifle td,
+#scoreboard tr.aa td {
   color: rgba(234, 242, 251, 0.7);
+}
+
+#scoreboard tr.plane td {
+  color: rgba(160, 200, 255, 0.85);
 }
 
 #cpu-control,
 #rifle-control,
+#plane-control,
+#aa-control,
 #music-control,
 #sfx-control,
 #time-control {
@@ -435,6 +442,8 @@ canvas {
 
 #cpu-control button,
 #rifle-control button,
+#plane-control button,
+#aa-control button,
 #music-control button,
 #sfx-control button {
   width: 34px;
@@ -450,6 +459,8 @@ canvas {
 
 #cpu-control button:hover:not(:disabled),
 #rifle-control button:hover:not(:disabled),
+#plane-control button:hover:not(:disabled),
+#aa-control button:hover:not(:disabled),
 #music-control button:hover:not(:disabled),
 #sfx-control button:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.18);
@@ -457,6 +468,8 @@ canvas {
 
 #cpu-control button:active:not(:disabled),
 #rifle-control button:active:not(:disabled),
+#plane-control button:active:not(:disabled),
+#aa-control button:active:not(:disabled),
 #music-control button:active:not(:disabled),
 #sfx-control button:active:not(:disabled) {
   transform: scale(0.95);
@@ -464,6 +477,8 @@ canvas {
 
 #cpu-control button:disabled,
 #rifle-control button:disabled,
+#plane-control button:disabled,
+#aa-control button:disabled,
 #music-control button:disabled,
 #sfx-control button:disabled {
   opacity: 0.35;
@@ -493,7 +508,9 @@ canvas {
 }
 
 #cpu-count,
-#rifle-count {
+#rifle-count,
+#plane-count,
+#aa-count {
   min-width: 2ch;
   font-size: 18px;
 }

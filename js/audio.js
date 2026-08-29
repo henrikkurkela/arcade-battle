@@ -271,6 +271,120 @@ const EngineAudio = (() => {
     osc.stop(t0 + 0.55);
   }
 
+  /** One-shot aircraft cannon report (plane / AA gun). `dist` = meters from
+   *  the listener (player), so distant fire reads as faint crackle. */
+  function fire(dist) {
+    if (!started) return;
+    const t0 = ctx.currentTime;
+    const vol = clamp(1.3 / (1 + dist / 120), 0.1, 1);
+
+    // --- crack: short noise burst through a falling bandpass ----------------
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.setValueAtTime(1800, t0);
+    bp.frequency.exponentialRampToValueAtTime(300, t0 + 0.08);
+    bp.Q.value = 0.9;
+    const gn = ctx.createGain();
+    gn.gain.setValueAtTime(0.5 * vol, t0);
+    gn.gain.exponentialRampToValueAtTime(0.001, t0 + 0.12);
+    noise.connect(bp);
+    bp.connect(gn);
+    gn.connect(sfxGain);
+    noise.start(t0);
+    noise.stop(t0 + 0.15);
+
+    // --- thump: low sine with a fast pitch drop ------------------------------
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(140, t0);
+    osc.frequency.exponentialRampToValueAtTime(45, t0 + 0.09);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.6 * vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.12);
+    osc.connect(g);
+    g.connect(sfxGain);
+    osc.start(t0);
+    osc.stop(t0 + 0.15);
+  }
+
+  /** One-shot rocket launch (plane / AA gun): a heavy low thump plus a rising
+   *  whoosh. `dist` = meters from the listener (player). */
+  function rocketLaunch(dist = 0) {
+    if (!started) return;
+    const t0 = ctx.currentTime;
+    const vol = clamp(1.6 / (1 + dist / 160), 0.08, 1);
+
+    // --- deep thump: sine with a fast pitch drop ----------------------------
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(180, t0);
+    osc.frequency.exponentialRampToValueAtTime(50, t0 + 0.18);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.7 * vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.25);
+    osc.connect(g);
+    g.connect(sfxGain);
+    osc.start(t0);
+    osc.stop(t0 + 0.3);
+
+    // --- whoosh: noise through a rising bandpass ----------------------------
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.setValueAtTime(500, t0);
+    bp.frequency.exponentialRampToValueAtTime(1600, t0 + 0.25);
+    bp.Q.value = 0.8;
+    const gn = ctx.createGain();
+    gn.gain.setValueAtTime(0.001, t0);
+    gn.gain.exponentialRampToValueAtTime(0.4 * vol, t0 + 0.06);
+    gn.gain.exponentialRampToValueAtTime(0.001, t0 + 0.3);
+    noise.connect(bp);
+    bp.connect(gn);
+    gn.connect(sfxGain);
+    noise.start(t0);
+    noise.stop(t0 + 0.35);
+  }
+
+  /** One-shot rocket explosion (plane / AA gun). `dist` = meters from the
+   *  listener (player), so a distant detonation reads as a muffled thump. */
+  function rocketBoom(dist) {
+    if (!started) return;
+    const t0 = ctx.currentTime;
+    const vol = clamp(1.6 / (1 + dist / 160), 0.08, 1);
+
+    // --- boom: noise burst through a falling lowpass ------------------------
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuf;
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.setValueAtTime(1200, t0);
+    lp.frequency.exponentialRampToValueAtTime(80, t0 + 0.5);
+    const gn = ctx.createGain();
+    gn.gain.setValueAtTime(0.9 * vol, t0);
+    gn.gain.exponentialRampToValueAtTime(0.001, t0 + 0.6);
+    noise.connect(lp);
+    lp.connect(gn);
+    gn.connect(sfxGain);
+    noise.start(t0);
+    noise.stop(t0 + 0.65);
+
+    // --- sub thump: deep sine with a fast pitch drop -------------------------
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(90, t0);
+    osc.frequency.exponentialRampToValueAtTime(28, t0 + 0.4);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.8 * vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.5);
+    osc.connect(g);
+    g.connect(sfxGain);
+    osc.start(t0);
+    osc.stop(t0 + 0.55);
+  }
+
   /** One-shot destruction boom (M5): a bigger version of the shell boom.
    *  `dist` = meters from the listener (player). */
   function crash(dist = 0) {
@@ -475,6 +589,9 @@ const EngineAudio = (() => {
     mgFire,
     shellLaunch,
     shellBoom,
+    fire,
+    rocketLaunch,
+    rocketBoom,
     treeThud,
     warnBeep,
     context,

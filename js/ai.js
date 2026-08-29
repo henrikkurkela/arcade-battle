@@ -248,8 +248,12 @@ class TankAI {
         best = p;
       }
     };
-    consider(ctx.player);
+    // Tanks (player + CPU fleet), riflemen, and planes. AA guns are never
+    // actively targeted by tank AI (they can still be hit by stray fire or a
+    // shell splash — the weapon pools are target-agnostic).
     for (const p of ctx.tanks) if (p !== tank) consider(p);
+    for (const p of ctx.riflemen) consider(p);
+    for (const p of ctx.planes) consider(p);
     this.target = best;
   }
 }
@@ -360,12 +364,23 @@ class RiflemanAI {
     }
 
     // 4. Burst fire: in range and the body roughly on the aim point. The
-    // tracer flies along aimDir (exact lead), not the body heading.
+    // tracer flies along aimDir (exact lead, which may track UP at a plane),
+    // not the body heading. Alignment is judged on the horizontal bearing, so
+    // a rifleman can lay down fire on a plane overhead.
     this.fireCooldown -= dt;
     if (engaging && !this.backingOff && dist <= RIFLEMAN_FIRE_RANGE) {
       this._toTgt.copy(this._aim).sub(r.position);
-      r.barrelDir(this._fwd);
-      const aligned = this._toTgt.length() > 1e-3 && this._fwd.dot(this._toTgt.normalize()) > RIFLEMAN_FIRE_CONE;
+      const toLen = this._toTgt.length();
+      let aligned = false;
+      if (toLen > 1e-3) {
+        const hLen = Math.hypot(this._toTgt.x, this._toTgt.z);
+        if (hLen < 1e-3) {
+          aligned = true; // target directly overhead: any bearing works
+        } else {
+          r.barrelDir(this._fwd); // horizontal body front
+          aligned = (this._fwd.x * this._toTgt.x + this._fwd.z * this._toTgt.z) / hLen > RIFLEMAN_FIRE_CONE;
+        }
+      }
       if (aligned) {
         this.aimDir.copy(this._toTgt);
         if (this.burstLeft > 0) {
@@ -399,8 +414,219 @@ class RiflemanAI {
         best = p;
       }
     };
-    consider(ctx.player);
+    // Tanks (player + CPU fleet) and planes. AA guns are never targeted by
+    // rifleman AI.
     for (const p of ctx.tanks) consider(p);
+    for (const p of ctx.planes) consider(p);
+    this.target = best;
+  }
+}
+
+// --- PlaneAI tuning ------------------------------------------------------------
+// (Copied from the Arcade Plane game's HostileAI; constants are renamed with a
+// PLANE_ prefix so they don't collide with the tank/rifleman tuning above.)
+const PLANE_RETARGET_INTERVAL = 0.3; // s between target re-picks
+const PLANE_ENGAGE_RANGE = 1200; // m; nearest enemy within this is engaged
+const PLANE_FIRE_RANGE = 700; // m; max firing distance
+const PLANE_FIRE_INTERVAL = 0.05; // s between shots (~20 rounds/s)
+const PLANE_FIRE_CONE = 0.985; // nose must be within ~10 deg of the aim point
+// Rockets: a powerful splash weapon the AI uses rarely. No ammo limit — a
+// long cooldown between launches keeps them occasional instead of spammy.
+const PLANE_ROCKET_COOLDOWN = 25; // s between a plane's rocket launches
+const PLANE_ROCKET_RANGE = 400; // m; max range for a rocket to arc onto the target
+const PLANE_ROCKET_CONE = 0.92; // nose must be within ~23 deg of the target
+const PLANE_LOOKAHEAD = 60; // m ahead of the nose to sample the terrain
+const PLANE_MIN_CLEARANCE = 25; // m; below this the AI pulls up
+const PLANE_MAX_AI_ALT = 250; // m AGL; above this the AI pushes over
+const PLANE_K_PITCH = 1.5; // pitch servo gain
+const PLANE_K_ROLL = 1.5; // roll servo gain
+const PLANE_MAX_AI_PITCH = THREE.MathUtils.degToRad(60); // never point far past this
+const PLANE_MAX_AI_ROLL = THREE.MathUtils.degToRad(75); // max bank (no loops/inversions)
+const PLANE_AVOID_RANGE = 80; // m; steer around other planes closer than this
+const PLANE_AVOID_AHEAD = 0.45; // plane must be this directly ahead (dot) to trigger
+const PLANE_MAX_BEHIND_AA = 200; // m; the AI never flies farther than this beyond the AA ring
+
+class PlaneAI {
+  constructor() {
+    this.control = { pitch: 0, roll: 0, rudder: 0, throttle: 0, firing: false, rocketFiring: false };
+    this.target = null; // unit currently being engaged
+    this.retargetTimer = 0;
+    this.fireCooldown = 0;
+    this.rocketCooldown = 0;
+    // Ballistic launch direction for the next rocket (read by main.js when
+    // control.rocketFiring is set). Arcs the unguided rocket onto the aim point.
+    this.rocketDir = new THREE.Vector3();
+    this._aim = new THREE.Vector3();
+    this._toTgt = new THREE.Vector3();
+    this._local = new THREE.Vector3();
+    this._qInv = new THREE.Quaternion();
+    this._ahead = new THREE.Vector3();
+    this._toPlane = new THREE.Vector3();
+    this._right = new THREE.Vector3();
+  }
+
+  /** Clear engagement state (used on respawn / restart). */
+  reset() {
+    this.target = null;
+    this.retargetTimer = 0;
+    this.fireCooldown = 0;
+    this.rocketCooldown = 0;
+    this.control.firing = false;
+    this.control.rocketFiring = false;
+  }
+
+  update(dt, plane, ctx) {
+    const c = this.control;
+    c.pitch = 0;
+    c.roll = 0;
+    c.rudder = 0;
+    c.firing = false;
+    c.rocketFiring = false;
+
+    // 1. Throttle: full while engaging, cruise when loitering.
+    const engaging = this.target && this.target.alive;
+    const targetThrottle = engaging ? 1.0 : 0.7;
+    c.throttle =
+      targetThrottle > plane.throttle + 0.02
+        ? 1
+        : targetThrottle < plane.throttle - 0.02
+          ? -1
+          : 0;
+
+    // 2. Target selection (nearest alive enemy in range).
+    this.retargetTimer -= dt;
+    if (this.retargetTimer <= 0 || !this.target || !this.target.alive) {
+      this.retargetTimer = PLANE_RETARGET_INTERVAL;
+      this._pickTarget(plane, ctx);
+    }
+
+    // 3. Lead the target so bullets meet it (loiter: the player's position).
+    const t = this.target;
+    if (t) {
+      const dist = plane.position.distanceTo(t.position);
+      // Bullets inherit the shooter's velocity (aircombat.js), so a tracer
+      // closes on the target faster (or slower) than BULLET_SPEED alone. Use
+      // the component of the shooter-vs-target relative velocity along the
+      // line of sight as the effective closing speed for the lead time.
+      this._toTgt.copy(t.position).sub(plane.position).normalize();
+      const closing =
+        BULLET_SPEED +
+        (plane.velocity.x - t.velocity.x) * this._toTgt.x +
+        (plane.velocity.y - t.velocity.y) * this._toTgt.y +
+        (plane.velocity.z - t.velocity.z) * this._toTgt.z;
+      const leadTime = dist / Math.max(closing, 40);
+      this._aim.copy(t.position).addScaledVector(t.velocity, leadTime);
+    } else {
+      this._aim.copy(ctx.player.position);
+    }
+
+    // 3b. Collision avoidance: steer around any plane we'd otherwise ram.
+    // Offsets the aim point to the far side of nearby planes so the nose
+    // steering (step 4) flies around them instead of through them.
+    const fwd = plane.forward;
+    const up = plane.up;
+    this._right.crossVectors(fwd, up);
+    for (const q of ctx.planes) {
+      if (q === plane || !q.alive) continue;
+      this._toPlane.copy(q.position).sub(plane.position);
+      const d = this._toPlane.length();
+      if (d >= PLANE_AVOID_RANGE || d < 1e-3) continue;
+      if (fwd.dot(this._toPlane.multiplyScalar(1 / d)) < PLANE_AVOID_AHEAD) continue;
+      // Which side is the plane on? Push the aim to the opposite side.
+      const side = this._toPlane.dot(this._right) < 0 ? -1 : 1;
+      const push = (1 - d / PLANE_AVOID_RANGE) * PLANE_AVOID_RANGE;
+      this._aim.addScaledVector(this._right, -side * push);
+      this._aim.addScaledVector(fwd, push * 0.5);
+    }
+
+    // 3c. Battle area: the AI must not fly more than PLANE_MAX_BEHIND_AA beyond
+    // the AA ring. If it strays past the boundary, pull the aim point back onto
+    // it (same altitude) so the nose steering flies it home.
+    const horiz = Math.hypot(plane.position.x, plane.position.z);
+    const boundary = AA_RADIUS + PLANE_MAX_BEHIND_AA;
+    if (horiz > boundary) {
+      const s = boundary / horiz;
+      this._aim.x = plane.position.x * s;
+      this._aim.z = plane.position.z * s;
+      this._aim.y = plane.position.y;
+    }
+
+    // 4. Steer the nose toward the aim point.
+    // Local frame: x = right, y = up, z = back (nose is -z).
+    // Servo the actual angles toward the desired ones: the flight model has
+    // no self-centering, so the AI must actively level the wings.
+    this._toTgt.copy(this._aim).sub(plane.position);
+    this._qInv.copy(plane.quaternion).invert();
+    this._local.copy(this._toTgt).applyQuaternion(this._qInv);
+    // Positive pitch raises the nose; positive roll banks left (yaw += sin(roll)).
+    const desiredPitch = clamp(
+      Math.atan2(this._local.y, -this._local.z),
+      -PLANE_MAX_AI_PITCH,
+      PLANE_MAX_AI_PITCH
+    );
+    const desiredRoll = -Math.atan2(this._local.x, -this._local.z);
+    c.pitch = clamp((desiredPitch - plane.pitch) * PLANE_K_PITCH, -1, 1);
+    c.roll = clamp((desiredRoll - plane.roll) * PLANE_K_ROLL, -1, 1);
+
+    // 5. Terrain avoidance: a strong pull-up overrides aiming.
+    this._ahead
+      .copy(plane.position)
+      .addScaledVector(plane.forward, PLANE_LOOKAHEAD);
+    const clearance =
+      this._ahead.y - ctx.terrain.heightAt(this._ahead.x, this._ahead.z);
+    if (clearance < PLANE_MIN_CLEARANCE) c.pitch = 1;
+
+    // 5b. Altitude ceiling: a strong push-over overrides aiming.
+    const alt = plane.position.y - ctx.terrain.heightAt(plane.position.x, plane.position.z);
+    if (alt > PLANE_MAX_AI_ALT) c.pitch = -1;
+
+    // 6. Firing decision.
+    if (
+      t &&
+      this.fireCooldown <= 0 &&
+      this._toTgt.length() < PLANE_FIRE_RANGE &&
+      plane.forward.dot(this._local.copy(this._toTgt).normalize()) > PLANE_FIRE_CONE
+    ) {
+      c.firing = true;
+      this.fireCooldown = PLANE_FIRE_INTERVAL;
+    }
+
+    // 6b. Rocket decision: rare (long cooldown) and powerful. Needs a target
+    //     in range and the nose roughly on it; the rocket is then launched on
+    //     the ballistic arc that brings it down onto the aim point.
+    if (
+      t &&
+      this.rocketCooldown <= 0 &&
+      this._toTgt.length() < PLANE_ROCKET_RANGE &&
+      plane.forward.dot(this._local.copy(this._toTgt).normalize()) > PLANE_ROCKET_CONE &&
+      rocketArcDir(plane.position, this._aim, this.rocketDir)
+    ) {
+      c.rocketFiring = true;
+      this.rocketCooldown = PLANE_ROCKET_COOLDOWN;
+    }
+
+    // 7. Timers.
+    this.fireCooldown -= dt;
+    this.rocketCooldown -= dt;
+    return this.control;
+  }
+
+  _pickTarget(plane, ctx) {
+    let best = null;
+    let bestD = PLANE_ENGAGE_RANGE;
+    const consider = (p) => {
+      if (!p || !p.alive) return;
+      const d = plane.position.distanceTo(p.position);
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    };
+    // Other planes, tanks (player + CPU fleet), and riflemen. AA guns are
+    // never targeted by plane AI.
+    for (const p of ctx.planes) if (p !== plane) consider(p);
+    for (const p of ctx.tanks) consider(p);
+    for (const p of ctx.riflemen) consider(p);
     this.target = best;
   }
 }
