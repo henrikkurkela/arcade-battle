@@ -48,7 +48,7 @@ const Game = (() => {
 
   // --- Combat (M3) -----------------------------------------------------------
   const MG_FIRE_INTERVAL = 0.08; // s between player MG shots
-  const MG_DAMAGE_PLAYER = 6; // damage per player tracer
+  const MG_DAMAGE_PLAYER = 3; // damage per player tracer
   const GUN_HEAT_PER_SHOT = 1; // % heat per shot; 100 shots = overheat
   const GUN_COOL_RATE = 10; // %/s while not firing
   const GUN_MAX_TEMP = 100; // overheat: no fire until the gun cools back to 0
@@ -58,7 +58,7 @@ const Game = (() => {
 
   // --- AI fleet (M4) ---------------------------------------------------------
   const CPU_RESPAWN_DELAY = 3; // s before a destroyed CPU reappears
-  const MG_DAMAGE_AI = 5; // damage per AI tracer
+  const MG_DAMAGE_AI = 2; // damage per AI tracer
   const CAM_SHAKE_DESTROYED = 1.6; // camera shake when the player is destroyed
   const OVERLAY_DELAY = 0.8; // s the destruction registers before the panel appears
   // Damage smoke: a tank at or below these HP ratios trails smoke (checked

@@ -123,7 +123,7 @@ const SHELL_LIFE = 8; // s fuse
 const SHELL_GRAVITY = 9.8; // m/s^2 (arcs the shell)
 const SHELL_FUSE_RADIUS = 5; // m; proximity stand-off that triggers detonation
 const BLAST_RADIUS = 12; // m; splash damage radius
-const SHELL_DAMAGE = 40; // HP at the blast center
+const SHELL_DAMAGE = 60; // HP at the blast center
 const SHELL_DAMAGE_MIN = 15; // HP at the blast edge
 const SHELL_POOL_SIZE = 32; // pooled shells (player + CPU volleys in flight)
 
