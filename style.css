@@ -409,6 +409,10 @@ canvas {
   font-weight: 700;
 }
 
+#scoreboard tr.rifle td {
+  color: rgba(234, 242, 251, 0.7);
+}
+
 #cpu-control,
 #rifle-control,
 #music-control,

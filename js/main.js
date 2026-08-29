@@ -373,6 +373,8 @@ const Game = (() => {
   let shellReload = 0; // s until the shell is ready again (0 = READY)
   let kills = 0;
   let damageDealt = 0; // total HP the player has dealt (score)
+  let rifleKills = 0; // squad tally: one "RIFLEMEN" row on the scoreboard
+  let rifleDamage = 0;
   let fleet = []; // M4: [{ tank, ai, respawnTimer }]
   let rifleFleet = []; // M7: [{ unit, ai, respawnTimer }]
   const felledTrees = []; // trees felled this run (restored on restart)
@@ -558,6 +560,8 @@ const Game = (() => {
     shellReload = 0;
     kills = 0;
     damageDealt = 0;
+    rifleKills = 0;
+    rifleDamage = 0;
     distance = 0;
     destroyReason = "";
     overlayDelay = 0;
@@ -718,7 +722,8 @@ const Game = (() => {
       kills++;
       addMessage("You killed " + r.callsign);
     } else if (killer) {
-      shooterStatsFor(killer).kills++;
+      if (killer.team === "riflemen") rifleKills++;
+      else shooterStatsFor(killer).kills++;
       addMessage(killer.callsign + " killed " + r.callsign);
     }
   }
@@ -972,6 +977,8 @@ const Game = (() => {
   function recordDamage(owner, victim, dealt) {
     if (owner === tank) {
       damageDealt += dealt;
+    } else if (owner.team === "riflemen") {
+      rifleDamage += dealt;
     } else {
       shooterStatsFor(owner).damage += dealt;
     }
@@ -1213,10 +1220,7 @@ const Game = (() => {
       const s = shooterStats.get(slot.tank) || { kills: 0, damage: 0 };
       rows.push({ name: slot.tank.callsign, kills: s.kills, damage: s.damage, cls: "" });
     }
-    for (const slot of rifleFleet) {
-      const s = shooterStats.get(slot.unit) || { kills: 0, damage: 0 };
-      rows.push({ name: slot.unit.callsign, kills: s.kills, damage: s.damage, cls: "" });
-    }
+    rows.push({ name: "RIFLEMEN", kills: rifleKills, damage: rifleDamage, cls: "rifle" });
     rows.forEach((r) => (r.score = r.damage + r.kills * KILL_SCORE));
     rows.sort((a, b) => b.score - a.score);
     scoreboardBody.textContent = "";
