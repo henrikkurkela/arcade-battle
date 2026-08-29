@@ -53,6 +53,7 @@ const SLIP_SPIN = 10; // m/s of track spin at full slip (spinning-in-place)
 const TURRET_PITCH_MIN = THREE.MathUtils.degToRad(-10);
 const TURRET_PITCH_MAX = THREE.MathUtils.degToRad(30);
 const MOUSE_SENS = 0.0022; // rad/px (player turret)
+const PLAYER_TURRET_YAW_RATE = 1.5; // rad/s max player turret slew
 const HULL_EASE = 8; // pitch/roll easing rate (per second)
 const CORNER_X = 1.3; // m, hull corner offset (left/right)
 const CORNER_Z = 1.9; // m, hull corner offset (front/rear)
@@ -322,8 +323,12 @@ class Tank {
     this.hullPitch = easeToward(this.hullPitch, targetPitch, HULL_EASE, dt);
     this.hullRoll = easeToward(this.hullRoll, targetRoll, HULL_EASE, dt);
 
-    // Turret: mouse-driven (player). Yaw is free; pitch is clamped.
-    this.turretYaw -= control.turretDX * MOUSE_SENS;
+    // Turret: mouse-driven (player). Yaw is rate-limited; pitch is clamped.
+    this.turretYaw += clamp(
+      -control.turretDX * MOUSE_SENS,
+      -PLAYER_TURRET_YAW_RATE * dt,
+      PLAYER_TURRET_YAW_RATE * dt
+    );
     this.turretPitch = clamp(
       this.turretPitch - control.turretDY * MOUSE_SENS,
       TURRET_PITCH_MIN,
