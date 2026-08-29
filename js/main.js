@@ -156,7 +156,7 @@ const Game = (() => {
   const AA_RESPAWN = 0; // (unused: guns re-enable on a timer, see aagun.js)
 
   // --- Garage base (M5) ------------------------------------------------------
-  const BASE_HALF = 20; // m; the pad is 40 x 40 centered on the spawn point
+  const BASE_HALF = 30; // m; the pad is 60 x 60 centered on the spawn point
   const BASE_REPAIR_RATE = 20; // HP/s while the player tank is inside (player only)
   // The ground is flattened over a region this much larger than the pad, one
   // full terrain cell beyond each edge (== TERRAIN_CELL). The coarse mesh grid
@@ -625,7 +625,7 @@ const Game = (() => {
   /** Concrete pad with a yellow hazard border and painted "GARAGE" text,
    *  painted on a flat canvas and laid on the (flattened) base zone. */
   function makeBaseDecal(y) {
-    const S = 256; // canvas px across the pad (40 m)
+    const S = 256; // canvas px across the pad (60 m)
     const c = document.createElement("canvas");
     c.width = c.height = S;
     const g = c.getContext("2d");
