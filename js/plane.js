@@ -37,8 +37,9 @@ const SURFACE_EASE = 8; // deflection easing rate (per second)
 const TAXI_PITCH = THREE.MathUtils.degToRad(8); // natural nose-up attitude while on the gear (small tailwheel)
 const GROUND_LEVEL_RATE = 10; // how fast pitch/roll settle to the taxi attitude while grounded (per second)
 // Armor: a multiplier dividing incoming damage of the matching kind
-// (effective = raw / armor, floored). A plane has none (both levels are 1).
-const PLANE_SOFT_ARMOR = 1; // vs SOFT damage (cannon / small arms)
+// (effective = raw / armor, floored). A plane carries light soft armor (3)
+// but no hard armor (1): it shrugs off cannon fire but not rockets.
+const PLANE_SOFT_ARMOR = 3; // vs SOFT damage (cannon / small arms)
 const PLANE_HARD_ARMOR = 1; // vs HARD damage (rockets / main gun)
 
 /** Exponential ease toward a target (frame-rate independent). */

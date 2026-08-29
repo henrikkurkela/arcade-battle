@@ -121,9 +121,10 @@ const Game = (() => {
   const PLANE_COUNT = 4; // default fleet size (menu allows 0-16)
   const PLANE_MAX = 16; // max planes
   const PLANE_RESPAWN_DELAY = 3; // s before a downed plane reappears
-  // SOFT damage (cannon). A plane's PLANE_SOFT_ARMOR (1) cancels it, so a plane
-  // takes the full 7 per tracer; the same tracer chews through ground armor.
-  const PLANE_BULLET_DAMAGE = 7; // raw damage per CPU plane tracer
+  // SOFT damage (cannon). A plane's PLANE_SOFT_ARMOR (3) leaves 7 per tracer
+  // (21/3), matching the legacy plane-vs-plane value; the same tracer now
+  // chews through ground armor (21/10 = 2 vs a tank).
+  const PLANE_BULLET_DAMAGE = 21; // raw damage per CPU plane tracer
   // Plane liveries + callsigns (16, matching the menu's 0-16 range).
   const PLANE_LIVERIES = [
     0x3a4150, 0x556b2f, 0x8a4b3a, 0x3f5d7a, 0x6b5b95, 0x2f6f6f,
@@ -177,8 +178,9 @@ const Game = (() => {
   const VEHICLE_TANK = "tank";
   const VEHICLE_PLANE = "plane";
   // Plane player weapons (ported from the Arcade Plane game). SOFT damage: a
-  // tank's TANK_SOFT_ARMOR (10) cancels it, so a tank still takes 1 per hit.
-  const PLAYER_BULLET_DAMAGE = 10; // raw damage per player cannon tracer
+  // tank's TANK_SOFT_ARMOR (10) leaves 3 per hit (30/10); vs a plane's armor
+  // (3) it deals 10, keeping the player's arcade edge over the CPU's 7.
+  const PLAYER_BULLET_DAMAGE = 30; // raw damage per player cannon tracer
   const PLAYER_FIRE_INTERVAL = 0.05; // s between player cannon shots
   const ROCKET_MAX_AMMO = 6; // rockets the player can hold
   const ROCKET_DAMAGE_PER_ROCKET = 100; // damage dealt (any weapon) to earn 1
