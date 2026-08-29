@@ -513,6 +513,21 @@ class Tank {
     brake.position.set(0, 0, -3.95);
     this.elev.add(brake);
 
+    // MG barrel: a thinner, shorter gun offset to the tank's right of the main
+    // gun. Fires from the same muzzle marker (close enough that a second one
+    // is unnecessary). Parented to `elev` so it pitches with the main gun.
+    const mgBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 1.8, 8).rotateX(Math.PI / 2), darkMat);
+    mgBarrel.position.set(0.28, -0.12, -1.1);
+    this.elev.add(mgBarrel);
+
+    // Mantlet block: a low shield at the base of the guns, from the turret
+    // face forward just past the barrel bases (both guns still protrude well
+    // beyond it). Parented to `elev` so it stays seated on the gun as it
+    // pitches (a turret-fixed mantlet would visibly separate at elevation).
+    const mantlet = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 0.85), darkMat);
+    mantlet.position.set(0.1, -0.02, -0.875);
+    this.elev.add(mantlet);
+
     // Empty marker at the barrel tip for the muzzle world position.
     this.muzzleObj = new THREE.Object3D();
     this.muzzleObj.position.set(0, 0, -4.3);
