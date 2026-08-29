@@ -211,7 +211,7 @@ class Trees {
     const rand = mulberry32(seed);
 
     // Shared geometry and materials (created once, reused by every tree).
-    const trunkGeo = new THREE.CylinderGeometry(0.3, 0.4, 3, 8);
+    const trunkGeo = new THREE.CylinderGeometry(0.3, 0.4, 3.9, 8);
     const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4226 });
     const pineCanopyGeo = new THREE.ConeGeometry(2.2, 5, 8);
     const pineCanopyMat = new THREE.MeshLambertMaterial({ color: 0x2d5a27 });
@@ -249,7 +249,7 @@ class Trees {
 
       const g = new THREE.Group();
       const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-      trunk.position.y = 1.5;
+      trunk.position.y = 1.2; // sunk 0.75 m so the base reaches the ground on steep slopes
       const canopy = new THREE.Mesh(
         isPine ? pineCanopyGeo : broadCanopyGeo,
         isPine ? pineCanopyMat : broadCanopyMat
