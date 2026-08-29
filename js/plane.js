@@ -154,6 +154,7 @@ class Plane {
     this.hp = this.maxHp;
     this.alive = true;
     this.grounded = false;
+    this.group.visible = true;
     this._smokeTimer = 0;
     this.aileronDefl = 0;
     this.elevatorDefl = 0;
