@@ -265,7 +265,7 @@ class Tank {
     // Fenders: thin plates over each track, tying the hull to the tracks.
     for (const side of [1, -1]) {
       const fender = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.05, 4.4), hullMat);
-      fender.position.set(side * (HULL_WIDE / 2 + 0.28), 0.5, 0);
+      fender.position.set(side * (HULL_WIDE / 2 + 0.28), 0.2, 0);
       g.add(fender);
     }
 
@@ -279,8 +279,9 @@ class Tank {
     const R_SMALL = 0.22; // sprocket/idler radius
     const TRACK_W = 0.62; // track width (extrusion depth)
     const BAND = 0.09; // track band thickness
-    const TRACK_DROP = 0.2; // assembly lowered so the track bottom (not the
-                            // hull bottom, at y=-0.15) is the tank's lowest point
+    const TRACK_DROP = 0.5; // assembly lowered so the track bottom (not the
+                             // hull bottom, at y=-0.15) is the tank's lowest
+                             // point, resting on the ground (y=-TRACK_H)
     const WHEEL_Z = [-2.0, -1.2, -0.4, 0.4, 1.2, 2.0];
     const bigGeo = new THREE.CylinderGeometry(R_BIG, R_BIG, 0.5, 12).rotateZ(Math.PI / 2);
     const smallGeo = new THREE.CylinderGeometry(R_SMALL, R_SMALL, 0.5, 12).rotateZ(Math.PI / 2);
