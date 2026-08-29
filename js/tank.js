@@ -221,20 +221,58 @@ class Tank {
     hull.position.y = TRACK_H;
     g.add(hull);
 
-    // Tracks (two boxes, one per side) + six road wheels each (static).
+    // Tracks: an extruded loop wrapping the wheel line, one per side, with six
+    // wheels inside (static). The first and last wheels (drive sprocket /
+    // idler) are smaller than the four road wheels; every wheel's topmost
+    // point lies on the same plane (WHEEL_TOP), so the track's bottom run
+    // sags at the road wheels and rises around the smaller end wheels.
+    const WHEEL_TOP = 0.56; // common top plane of all wheels
+    const R_BIG = 0.28; // road wheel radius
+    const R_SMALL = 0.22; // sprocket/idler radius
+    const TRACK_W = 0.62; // track width (extrusion depth)
+    const BAND = 0.09; // track band thickness
+    const WHEEL_Z = [-2.0, -1.2, -0.4, 0.4, 1.2, 2.0];
+    const bigGeo = new THREE.CylinderGeometry(R_BIG, R_BIG, 0.5, 12).rotateZ(Math.PI / 2);
+    const smallGeo = new THREE.CylinderGeometry(R_SMALL, R_SMALL, 0.5, 12).rotateZ(Math.PI / 2);
     for (const side of [1, -1]) {
-      const track = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.5, HULL_LEN + 0.1), trackMat);
-      track.position.set(side * (HULL_WIDE / 2 + 0.28), 0.25, 0);
-      g.add(track);
-      for (let i = 0; i < 6; i++) {
-        const z = -2.0 + i * 0.8;
-        const wheel = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.28, 0.28, 0.5, 12).rotateZ(Math.PI / 2),
-          wheelMat
-        );
-        wheel.position.set(side * (HULL_WIDE / 2 + 0.28), 0.28, z);
+      const cx = side * (HULL_WIDE / 2 + 0.28);
+      for (let i = 0; i < WHEEL_Z.length; i++) {
+        const end = i === 0 || i === WHEEL_Z.length - 1;
+        const r = end ? R_SMALL : R_BIG;
+        const wheel = new THREE.Mesh(end ? smallGeo : bigGeo, wheelMat);
+        wheel.position.set(cx, WHEEL_TOP - r, WHEEL_Z[i]);
         g.add(wheel);
       }
+      // Track loop: a stadium outline (bottom run at y=0, top run tangent to
+      // the end-wheel wrap arcs) with a stadium hole offset in by BAND, so the
+      // wheels show through the window. Built in the side-view plane
+      // (shape x = tank z, y = up) and extruded across the track width.
+      const cEndY = WHEEL_TOP - R_SMALL; // end wheel center height (0.34)
+      const rOut = cEndY; // outer arc radius: bottom at y=0, top at y=2*cEndY
+      const rIn = rOut - BAND;
+      const shape = new THREE.Shape();
+      shape.moveTo(-WHEEL_Z[5], 0);
+      shape.lineTo(WHEEL_Z[5], 0);
+      shape.absarc(WHEEL_Z[5], cEndY, rOut, -Math.PI / 2, Math.PI / 2, false);
+      shape.lineTo(-WHEEL_Z[5], 2 * cEndY);
+      shape.absarc(-WHEEL_Z[5], cEndY, rOut, Math.PI / 2, (3 * Math.PI) / 2, false);
+      const hole = new THREE.Path();
+      hole.moveTo(WHEEL_Z[5], BAND);
+      hole.lineTo(-WHEEL_Z[5], BAND);
+      hole.absarc(-WHEEL_Z[5], cEndY, rIn, -Math.PI / 2, Math.PI / 2, true);
+      hole.lineTo(WHEEL_Z[5], 2 * cEndY - BAND);
+      hole.absarc(WHEEL_Z[5], cEndY, rIn, Math.PI / 2, (3 * Math.PI) / 2, true);
+      shape.holes.push(hole);
+      const trackGeo = new THREE.ExtrudeGeometry(shape, {
+        depth: TRACK_W,
+        bevelEnabled: false,
+        curveSegments: 12,
+      });
+      trackGeo.rotateY(-Math.PI / 2); // shape x -> tank z, extrusion -> tank x
+      trackGeo.translate(TRACK_W / 2, 0, 0); // center the extrusion on x=0
+      const track = new THREE.Mesh(trackGeo, trackMat);
+      track.position.x = cx;
+      g.add(track);
     }
 
     // Turret (yaws) -> elevation (pitches) -> barrel.
