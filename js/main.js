@@ -590,7 +590,9 @@ const Game = (() => {
   /** A unit was destroyed by a weapon hit: dispatch to the right handler. */
   function handleKill(owner, victim) {
     if (victim === player) {
-      destroyReason = "You were shot down by " + shooterName(owner) + ".";
+      // "Shot down" only fits the plane; a tank is "destroyed".
+      const verb = vehicle === VEHICLE_PLANE ? "shot down" : "destroyed";
+      destroyReason = "You were " + verb + " by " + shooterName(owner) + ".";
       return; // death itself is handled via !player.alive below
     }
     const slot = fleet.find((s) => s.tank === victim);
