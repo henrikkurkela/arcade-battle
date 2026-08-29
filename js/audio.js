@@ -308,6 +308,66 @@ const EngineAudio = (() => {
     osc.stop(t0 + 0.65);
   }
 
+  /** One-shot human scream ("AARGH"): a pitch-dropping sawtooth voice through
+   *  a formant bandpass, with vibrato and a breathy noise edge. `dist` =
+   *  meters from the listener (player). */
+  function scream(dist) {
+    if (!started) return;
+    const t0 = ctx.currentTime;
+    const vol = clamp(1.4 / (1 + dist / 140), 0.1, 1);
+    const f0 = 260 + Math.random() * 80;
+
+    // --- voice: sawtooth with a falling pitch (the scream dying out) ---------
+    const osc = ctx.createOscillator();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(f0, t0);
+    osc.frequency.exponentialRampToValueAtTime(f0 * 0.45, t0 + 0.42);
+
+    // Vibrato: wobble the pitch while the scream is up.
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 11 + Math.random() * 4;
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = f0 * 0.12;
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc.frequency);
+
+    // Formant bandpass: shapes the buzz into a voice-like cry.
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.setValueAtTime(850, t0);
+    bp.frequency.exponentialRampToValueAtTime(420, t0 + 0.45);
+    bp.Q.value = 1.4;
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.001, t0);
+    g.gain.exponentialRampToValueAtTime(0.7 * vol, t0 + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.5);
+    osc.connect(bp);
+    bp.connect(g);
+    g.connect(sfxGain);
+    osc.start(t0);
+    osc.stop(t0 + 0.55);
+    lfo.start(t0);
+    lfo.stop(t0 + 0.55);
+
+    // --- breathy noise edge ---------------------------------------------------
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuf;
+    const bpN = ctx.createBiquadFilter();
+    bpN.type = "bandpass";
+    bpN.frequency.value = 1400;
+    bpN.Q.value = 0.7;
+    const gn = ctx.createGain();
+    gn.gain.setValueAtTime(0.001, t0);
+    gn.gain.exponentialRampToValueAtTime(0.15 * vol, t0 + 0.04);
+    gn.gain.exponentialRampToValueAtTime(0.001, t0 + 0.4);
+    noise.connect(bpN);
+    bpN.connect(gn);
+    gn.connect(sfxGain);
+    noise.start(t0);
+    noise.stop(t0 + 0.45);
+  }
+
   /** One-shot felled-tree thud: a low sine thump plus a short lowpassed
    *  noise crunch. `dist` = meters from the listener (player). */
   function treeThud(dist) {
@@ -411,6 +471,7 @@ const EngineAudio = (() => {
     isMuted,
     setSfxVolume,
     crash,
+    scream,
     mgFire,
     shellLaunch,
     shellBoom,

@@ -703,7 +703,8 @@ const Game = (() => {
     rifleFleet.push({ unit: u, ai: new RiflemanAI(), respawnTimer: 0 });
   }
 
-  /** A rifleman was killed: hide him, smoke burst, start the respawn timer. */
+  /** A rifleman was killed: hide him, blood splash + body pieces + scream,
+   *  start the respawn timer. */
   function destroyRifleman(slot, killer) {
     const r = slot.unit;
     if (slot.respawnTimer > 0) return; // already down, respawn pending
@@ -711,11 +712,16 @@ const Game = (() => {
     r.hp = 0;
     r.group.visible = false;
     const dist = r.position.distanceTo(tank.position);
-    spawnSmoke(r.position, {
-      count: 20, size: 1.4, color: 0x4a4a4a, opacity: 0.7, life: 1.6,
-      sx: 0.8, sy: 0.8, sz: 0.8, vh: 3, vyLo: 1, vyHi: 3,
+    // Blood splash at torso height: short-lived red particles that fall.
+    _smokePt.copy(r.position);
+    _smokePt.y += 1;
+    spawnSmoke(_smokePt, {
+      count: 30, size: 0.6, color: 0x7a1010, opacity: 0.9, life: 0.9,
+      sx: 0.6, sy: 0.8, sz: 0.6, vh: 3, vyLo: -0.5, vyHi: 2.5,
+      drift: 0, grav: 9.8,
     });
-    EngineAudio.crash(dist);
+    debris.spawnBody(r.position, r.velocity);
+    EngineAudio.scream(dist);
     slot.respawnTimer = RIFLEMAN_RESPAWN_DELAY;
     slot.ai.reset();
     if (killer === tank) {
@@ -847,6 +853,8 @@ const Game = (() => {
     const size = o.size ?? 2.4;
     const opacity = o.opacity ?? 0.9;
     const life = o.life ?? 3.0;
+    const drift = o.drift ?? 0.5; // upward drift per second (smoke)
+    const grav = o.grav ?? 0; // downward acceleration per second (blood)
     const positions = new Float32Array(N * 3);
     const vels = [];
     for (let i = 0; i < N; i++) {
@@ -872,7 +880,7 @@ const Game = (() => {
     });
     const points = new THREE.Points(geo, mat);
     scene.add(points);
-    smokes.push({ points, vels, life, maxLife: life, maxOpacity: opacity });
+    smokes.push({ points, vels, life, maxLife: life, maxOpacity: opacity, drift, grav });
   }
 
   function updateSmoke(dt) {
@@ -883,7 +891,7 @@ const Game = (() => {
       for (let j = 0; j < smoke.vels.length; j++) {
         const v = smoke.vels[j];
         v.multiplyScalar(Math.max(0, 1 - 0.8 * dt));
-        v.y += 0.5 * dt; // smoke drifts up
+        v.y += (smoke.drift - smoke.grav) * dt; // smoke drifts up, blood falls
         attr.setXYZ(j, attr.getX(j) + v.x * dt, attr.getY(j) + v.y * dt, attr.getZ(j) + v.z * dt);
       }
       attr.needsUpdate = true;

@@ -4,7 +4,9 @@
 // Pooled debris system: when a tank is destroyed, a burst of tumbling
 // tank-shaped pieces (hull slabs, track sections, turret chunks) flies out
 // (inheriting the tank's velocity), falls under gravity, lands on the
-// terrain, rests there for a while, then shrinks away.
+// terrain, rests there for a while, then shrinks away. A killed rifleman
+// instead breaks into small body pieces (limb/torso/head chunks) with the
+// same flight-and-rest behavior.
 // Fixed-size pool of meshes: no per-kill allocation, no GC churn.
 // ---------------------------------------------------------------------------
 
@@ -12,6 +14,8 @@ const DEBRIS_PER_KILL = 10; // pieces per destroyed tank
 const DEBRIS_POOL_SIZE = 96; // pooled meshes (~9 simultaneous kills in flight)
 const FOLIAGE_PER_FELL = 12; // pieces per felled tree
 const FOLIAGE_POOL_SIZE = 48; // pooled meshes (~4 simultaneous fellings in flight)
+const BODY_PER_KILL = 6; // pieces per killed rifleman
+const BODY_POOL_SIZE = 48; // pooled meshes (~8 simultaneous kills in flight)
 const DEBRIS_GRAVITY = 9.8;
 const DEBRIS_AIR_DRAG = 0.5; // per second
 const DEBRIS_KICK = 12; // m/s max random scatter speed
@@ -85,8 +89,47 @@ class Debris {
         restTimer: 0,
       });
     }
+    // Body pieces for killed riflemen: limb, torso and head chunks in
+    // uniform/skin tones.
+    this.body = [];
+    this._nextFreeB = 0;
+    const bGeos = [
+      new THREE.BoxGeometry(0.16, 0.5, 0.18), // leg
+      new THREE.BoxGeometry(0.14, 0.4, 0.16), // arm
+      new THREE.BoxGeometry(0.2, 0.34, 0.22), // torso chunk
+      new THREE.BoxGeometry(0.24, 0.26, 0.24), // head
+    ];
+    const bMats = [
+      new THREE.MeshLambertMaterial({ color: 0x4a5240 }), // coat
+      new THREE.MeshLambertMaterial({ color: 0x3a4034 }), // pants
+      new THREE.MeshLambertMaterial({ color: 0xc9a582 }), // skin
+      new THREE.MeshLambertMaterial({ color: 0x2b2e30 }), // dark
+    ];
+    for (let i = 0; i < BODY_POOL_SIZE; i++) {
+      const mesh = new THREE.Mesh(bGeos[i % bGeos.length], bMats[i % bMats.length]);
+      mesh.visible = false;
+      mesh.castShadow = true;
+      scene.add(mesh);
+      this.body.push({
+        mesh,
+        active: false,
+        pos: new THREE.Vector3(),
+        vel: new THREE.Vector3(),
+        angVel: new THREE.Vector3(),
+        quat: new THREE.Quaternion(),
+        scale: 1,
+        resting: false,
+        restTimer: 0,
+      });
+    }
     this._axis = new THREE.Vector3();
     this._q = new THREE.Quaternion();
+  }
+
+  /** Spawn a rifleman-death burst at `pos`, inheriting the unit's velocity
+   *  `vel`. */
+  spawnBody(pos, vel) {
+    this._burst(this.body, "_nextFreeB", BODY_PER_KILL, pos, vel);
   }
 
   /** Spawn a tank-destruction burst at `pos`, inheriting the tank's
@@ -147,6 +190,7 @@ class Debris {
   update(dt, terrain) {
     for (const e of this.pool) this._step(e, dt, terrain);
     for (const e of this.foliage) this._step(e, dt, terrain);
+    for (const e of this.body) this._step(e, dt, terrain);
   }
 
   _step(e, dt, terrain) {
@@ -191,6 +235,10 @@ class Debris {
       e.mesh.visible = false;
     }
     for (const e of this.foliage) {
+      e.active = false;
+      e.mesh.visible = false;
+    }
+    for (const e of this.body) {
       e.active = false;
       e.mesh.visible = false;
     }
