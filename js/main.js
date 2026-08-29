@@ -585,7 +585,7 @@ const Game = (() => {
   function shooterName(owner) {
     if (owner === player) return "You";
     if (owner.team === "aa") return "an AA gun";
-    if (owner.team === "riflemen") return "the riflemen";
+    if (owner.team === "riflemen") return "A rifleman";
     return owner.callsign;
   }
 
@@ -886,7 +886,7 @@ const Game = (() => {
       addMessage("You destroyed " + cp.callsign);
     } else {
       shooterStatsFor(killer).kills++;
-      addMessage(killer.callsign + " destroyed " + cp.callsign);
+      addMessage(shooterName(killer) + " destroyed " + cp.callsign);
     }
   }
 
@@ -955,11 +955,11 @@ const Game = (() => {
     slot.ai.reset();
     if (killer === player) {
       kills++;
-      addMessage("You killed " + r.callsign);
+      addMessage("You killed a rifleman");
     } else if (killer) {
       if (killer.team === "riflemen") rifleKills++;
       else shooterStatsFor(killer).kills++;
-      addMessage(killer.callsign + " killed " + r.callsign);
+      addMessage(shooterName(killer) + " killed a rifleman");
     }
   }
 
