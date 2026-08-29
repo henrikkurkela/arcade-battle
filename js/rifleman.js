@@ -224,22 +224,25 @@ class Rifleman {
     helmet.position.set(0, 1.62, 0);
     g.add(helmet);
 
-    // Arms: static, angled forward to hold the rifle.
+    // Arms: static, angled forward (toward -Z) to hold the rifle. The pivot
+    // stays at the shoulder so the hands stay connected to the body.
     const armGeo = new THREE.BoxGeometry(0.12, 0.46, 0.14);
     armGeo.translate(0, -0.18, 0); // pivot near the shoulder
     const armL = new THREE.Mesh(armGeo, coatMat);
     armL.position.set(-0.31, 1.26, 0);
-    armL.rotation.x = -1.05;
+    armL.rotation.x = 1.05;
     g.add(armL);
     const armR = new THREE.Mesh(armGeo, coatMat);
     armR.position.set(0.31, 1.26, 0);
-    armR.rotation.x = -1.05;
+    armR.rotation.x = 1.05;
     g.add(armR);
 
-    // Assault rifle: receiver + barrel + stock, held across the chest
-    // pointing down -Z. The muzzle marker sits at the barrel tip.
+    // Assault rifle: receiver + barrel + stock, held by the RIGHT hand (offset
+    // to +X, where the right hand reaches forward) pointing down -Z. The
+    // muzzle marker sits at the barrel tip; tracers and the muzzle flash read
+    // from it.
     const rifle = new THREE.Group();
-    rifle.position.set(0, 1.18, -0.35);
+    rifle.position.set(0.31, 1.1, -0.35);
     const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.1, 0.55), darkMat);
     rifle.add(receiver);
     const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.4), darkMat);
