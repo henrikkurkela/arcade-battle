@@ -153,7 +153,6 @@ const Game = (() => {
 
   // --- AA gun ring (M8) ------------------------------------------------------
   const AA_DEFAULT = 16; // default turrets (menu allows 0-16; max = AA_COUNT)
-  const AA_RESPAWN = 0; // (unused: guns re-enable on a timer, see aagun.js)
 
   // --- Garage base (M5) ------------------------------------------------------
   const BASE_HALF = 30; // m; the pad is 60 x 60 centered on the spawn point
@@ -444,7 +443,7 @@ const Game = (() => {
   const focus = new THREE.Vector3();
 
   // --- Garage base (M5) --------------------------------------------------------
-  // The repair pad: a flat 40 x 40 m rectangle centered on the spawn point.
+  // The repair pad: a flat 60 x 60 m rectangle centered on the spawn point.
   const BASE = { x0: -BASE_HALF, x1: BASE_HALF, z0: -BASE_HALF, z1: BASE_HALF, y: 0 };
   let inGarage = false; // the player tank is inside the pad (hint + repair)
 
@@ -889,8 +888,10 @@ const Game = (() => {
     if (killer === player) {
       kills++;
       addMessage("You destroyed " + cp.callsign);
-    } else {
-      shooterStatsFor(killer).kills++;
+    } else if (killer) {
+      if (killer.team === "riflemen") rifleKills++;
+      else if (killer.team === "aa") aaKills++;
+      else shooterStatsFor(killer).kills++;
       addMessage(cap(shooterName(killer)) + " destroyed " + cp.callsign);
     }
   }
@@ -963,6 +964,7 @@ const Game = (() => {
       addMessage("You killed a rifleman");
     } else if (killer) {
       if (killer.team === "riflemen") rifleKills++;
+      else if (killer.team === "aa") aaKills++;
       else shooterStatsFor(killer).kills++;
       addMessage(cap(shooterName(killer)) + " killed a rifleman");
     }
@@ -1059,7 +1061,9 @@ const Game = (() => {
       kills++;
       addMessage("You shot down " + cp.callsign);
     } else if (killer) {
-      if (killer.team !== "aa" && killer.team !== "riflemen") shooterStatsFor(killer).kills++;
+      if (killer.team === "riflemen") rifleKills++;
+      else if (killer.team === "aa") aaKills++;
+      else shooterStatsFor(killer).kills++;
       addMessage(cap(shooterName(killer)) + " shot down " + cp.callsign);
     }
   }
@@ -2163,6 +2167,12 @@ const Game = (() => {
         cp.update(dt, ac, terrain);
         blockObstacle(cp, _prevPos);
         blockAAGun(cp, _prevPos, true);
+        if (!cp.alive) {
+          // Died to obstacle/AA-gun chip damage: dispatch the destroy handler
+          // (debris burst + boom + respawn) instead of silently respawning.
+          destroyAiTank(slot, null);
+          continue;
+        }
         emitDamageSmoke(cp, dt);
         emitDust(cp, dt, ac.steer);
         tickCooldowns(cp, dt);
