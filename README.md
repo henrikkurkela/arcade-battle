@@ -206,8 +206,9 @@ vehicles) and when the plane's STALL warning appears.
 - `js/ai.js` — the controllers. `PlayerController` maps the keyboard and the
   pointer-locked mouse to a tank control vector (W/S throttle, A/D steer,
   Shift brake, LMB/Space fire MG, RMB/X fire shell). `PlanePlayerController`
-  does the same for the plane (mouse pitch/bank, W/S pitch, A/D bank, Q/E
-  rudder, Shift/Ctrl/C throttle, LMB/Space cannon, RMB/X rockets). `TankAI`
+   does the same for the plane (mouse pitch/bank, W/S pitch, A/D bank, Q/E
+   rudder, Shift/Ctrl/C or mouse wheel throttle, LMB/Space cannon, RMB/X
+   rockets). `TankAI`
   steers a CPU tank: nearest-enemy target selection (you, other CPUs, riflemen,
   and planes), lead pursuit, hull steering with a slope-avoidance override, a
   preferred engagement range, a battle-area leash (they never stray far beyond

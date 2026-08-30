@@ -44,10 +44,12 @@ class PlayerController {
 
 // --- PlanePlayerController (plane vehicle) -----------------------------------
 // Flight controls: pointer-locked mouse (up/down = pitch, left/right = bank)
-// plus keyboard (W/S pitch, A/D bank, Q/E rudder, Shift/Ctrl/C throttle).
-// Mouse and keyboard inputs are summed and clamped, so the keyboard remains a
-// fallback if the pointer lock fails. Space/LMB fire the cannon, X/RMB rockets.
+// plus keyboard (W/S pitch, A/D bank, Q/E rudder, Shift/Ctrl/C throttle) and
+// the mouse wheel (throttle). Mouse and keyboard inputs are summed and
+// clamped, so the keyboard remains a fallback if the pointer lock fails.
+// Space/LMB fire the cannon, X/RMB rockets.
 const PLANE_MOUSE_SENS = 1 / 10; // mouse px for full control deflection
+const PLANE_WHEEL_THROTTLE_STEP = 0.05; // throttle change per wheel notch
 
 class PlanePlayerController {
   constructor() {
@@ -70,6 +72,13 @@ class PlanePlayerController {
     c.throttle =
       (Input.isDown("ShiftLeft", "ShiftRight") ? 1 : 0) -
       (Input.isDown("ControlLeft", "ControlRight", "KeyC") ? 1 : 0);
+    // Mouse wheel adjusts the throttle directly (up = more). It is a discrete
+    // input, so it bypasses the rate-based `c.throttle` and steps the plane's
+    // throttle by a fixed amount per notch.
+    const wheel = Input.consumeMouseWheel();
+    if (wheel !== 0) {
+      plane.throttle = clamp(plane.throttle - wheel * PLANE_WHEEL_THROTTLE_STEP, 0, 1);
+    }
     // Left click (or Space) fires the cannon; right click (or X) rockets.
     c.firing = Input.isDown("Space") || Input.isMouseDown("left");
     c.rocketFiring = Input.isDown("KeyX") || Input.isMouseDown("right");

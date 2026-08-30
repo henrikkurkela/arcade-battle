@@ -10,7 +10,7 @@
 //
 // Flight model (deliberately simple, tuned to feel "arcade"):
 //  - W/S pitch, A/D bank (turns come from banking: yaw follows roll),
-//    Q/E rudder, Shift/Ctrl throttle.
+//    Q/E rudder, Shift/Ctrl throttle, mouse wheel throttle.
 //  - "Stickiness": the velocity vector rotates toward the nose direction at a
 //    rate proportional to FORWARD airspeed (the nose-aligned component of
 //    velocity). Lift fades out between 9 and 18 m/s of forward speed; with no

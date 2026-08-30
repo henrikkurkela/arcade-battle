@@ -9,6 +9,8 @@
 //    accumulated while locked and consumed once per frame by the Player
 //    Controller (`consumeMouseDelta`). An unintended lock loss (Esc) auto-
 //    pauses the game; the overlay states release the lock.
+//  - Mouse wheel: accumulated while locked and consumed once per frame by the
+//    Plane Controller (`consumeMouseWheel`) to adjust throttle.
 //
 // Game-level key events (start / pause / restart) are routed to `Game`.
 // ---------------------------------------------------------------------------
@@ -18,6 +20,7 @@ const Input = {
   mouse: new Set(), // "left" | "right"
   _dx: 0,
   _dy: 0,
+  _wheel: 0,
   _canvas: null,
   _wantLock: false,
   _locked: false,
@@ -43,6 +46,7 @@ const Input = {
     window.addEventListener("blur", () => {
       this.keys.clear();
       this.mouse.clear();
+      this._wheel = 0;
     });
 
     // Mouse buttons: left = MG, right = shell.
@@ -62,6 +66,20 @@ const Input = {
         this._dy += e.movementY;
       }
     });
+
+    // Throttle (plane): accumulate the wheel only while the pointer is locked,
+    // normalized to notches (~100 px per notch for pixel-mode wheels).
+    window.addEventListener(
+      "wheel",
+      (e) => {
+        if (!this._locked) return;
+        let notches = e.deltaY;
+        if (e.deltaMode === 1) notches *= 33; // line mode
+        else if (e.deltaMode === 2) notches *= 330; // page mode
+        this._wheel += notches / 100;
+      },
+      { passive: true }
+    );
 
     // Right click = shell: suppress the context menu on the canvas.
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -91,6 +109,13 @@ const Input = {
     return d;
   },
 
+  /** Read and reset the accumulated wheel notches (call once per frame). */
+  consumeMouseWheel() {
+    const w = this._wheel;
+    this._wheel = 0;
+    return w;
+  },
+
   /** Request pointer lock on the canvas (call from a user gesture). */
   lockPointer() {
     this._wantLock = true;
@@ -103,6 +128,7 @@ const Input = {
   unlockPointer() {
     this._wantLock = false;
     this._locked = false;
+    this._wheel = 0;
     if (document.exitPointerLock) document.exitPointerLock();
   },
 
