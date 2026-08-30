@@ -74,8 +74,12 @@ const Game = (() => {
   const MG_DAMAGE_AI = 20; // raw damage per AI tracer
   const CAM_SHAKE_DESTROYED = 1.6; // camera shake when the player is destroyed
   const OVERLAY_DELAY = 0.8; // s the destruction registers before the panel appears
+  // Chance a CPU tank kill triggers a special effect (the turret blow-off).
+  const TANK_SPECIAL_CHANCE = 0.2;
   // Chance a CPU plane kill triggers a special effect (the wing blow-off).
   const PLANE_SPECIAL_CHANCE = 0.4;
+  // Chance a rifleman kill triggers a special effect (the ragdoll fling).
+  const RIFLEMAN_SPECIAL_CHANCE = 0.5;
   // Damage smoke: a tank at or below these HP ratios trails smoke (checked
   // each frame) — light at <=50%, heavy (burning) at <=20%.
   const SMOKE_LIGHT_RATIO = 0.5;
@@ -893,9 +897,9 @@ const Game = (() => {
     cp.hp = 0;
     cp.group.visible = false;
     const dist = cp.position.distanceTo(player.position);
-    if (Math.random() < 0.2) {
-      // 20%: a special effect (turret blow-off + fireball + dust ring + ...).
-      // The effect spawns its own hull debris, smoke and deep boom.
+    if (Math.random() < TANK_SPECIAL_CHANCE) {
+      // A special effect (turret blow-off + fireball + dust ring + ...). The
+      // effect spawns its own hull debris, smoke and deep boom.
       destruction.special(cp, dist);
     } else {
       // 80%: the normal explosion (unchanged).
@@ -967,16 +971,21 @@ const Game = (() => {
     r.hp = 0;
     r.group.visible = false;
     const dist = r.position.distanceTo(player.position);
-    // Blood splash at torso height: short-lived red particles that fall.
-    _smokePt.copy(r.position);
-    _smokePt.y += 1;
-    spawnSmoke(_smokePt, {
-      count: 30, size: 0.6, color: 0x7a1010, opacity: 0.9, life: 0.9,
-      sx: 0.6, sy: 0.8, sz: 0.6, vh: 3, vyLo: -0.5, vyHi: 2.5,
-      drift: 0, grav: 9.8,
-    });
-    debris.spawnBody(r.position, r.velocity);
-    EngineAudio.scream(dist);
+    if (Math.random() < RIFLEMAN_SPECIAL_CHANCE) {
+      // Special effect (ragdoll fling + blood + body pieces + scream).
+      destruction.specialRifleman(r, dist, killer);
+    } else {
+      // The normal kill (unchanged): blood splash + body pieces + scream.
+      _smokePt.copy(r.position);
+      _smokePt.y += 1;
+      spawnSmoke(_smokePt, {
+        count: 30, size: 0.6, color: 0x7a1010, opacity: 0.9, life: 0.9,
+        sx: 0.6, sy: 0.8, sz: 0.6, vh: 3, vyLo: -0.5, vyHi: 2.5,
+        drift: 0, grav: 9.8,
+      });
+      debris.spawnBody(r.position, r.velocity);
+      EngineAudio.scream(dist);
+    }
     slot.respawnTimer = RIFLEMAN_RESPAWN_DELAY;
     slot.ai.reset();
     if (killer === player) {

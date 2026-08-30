@@ -29,6 +29,14 @@ const WING_UP = 12; // m/s launch, straight up
 const WING_INHERIT = 0.5; // fraction of the plane's velocity inherited
 const WING_TUMBLE = 6; // rad/s of random tumble (all axes)
 
+const BODY_FLY_POOL = 4; // pooled flying body assemblies
+const BODY_OUT = 7; // m/s launch, away from the killer
+const BODY_UP = 6; // m/s launch, straight up
+const BODY_INHERIT = 0.4; // fraction of the unit's velocity inherited
+const BODY_FLIP = 6; // rad/s backward flip (over the heels)
+const BODY_FLIP_JITTER = 2.5; // rad/s of random tumble added on top
+const BODY_LIE_LIFT = 0.14; // m; half the body's depth, so it lies flat (not sunk)
+
 // Shared physics for the coherent flying assemblies (turret + wing).
 const FLY_GRAVITY = 9.8;
 const FLY_AIR_DRAG = 0.5; // per second
@@ -148,16 +156,46 @@ class Destruction {
       });
     }
 
+    // --- Flying body assemblies (built once, pooled) -------------------------
+    this.bodies = [];
+    this._nextBody = 0;
+    for (let i = 0; i < BODY_FLY_POOL; i++) {
+      const group = this._buildBodyAssembly(RIFLEMAN_UNIFORMS[i % RIFLEMAN_UNIFORMS.length]);
+      group.visible = false;
+      this.scene.add(group);
+      this.bodies.push({
+        group,
+        active: false,
+        pos: new THREE.Vector3(),
+        vel: new THREE.Vector3(),
+        angVel: new THREE.Vector3(),
+        quat: new THREE.Quaternion(),
+        restQuat: new THREE.Quaternion(), // the lying-down pose (set on launch)
+        scale: 1,
+        resting: false,
+        restTimer: 0,
+      });
+    }
+
     this._axis = new THREE.Vector3();
     this._q = new THREE.Quaternion();
     this._right = new THREE.Vector3();
     this._back = new THREE.Vector3();
     this._wingOut = new THREE.Vector3();
     this._wingUp = new THREE.Vector3();
+    this._bodyDir = new THREE.Vector3();
+    this._bodyFlip = new THREE.Vector3();
+    this._bloodPt = new THREE.Vector3();
+    // +90 deg around the local X axis: tips a standing body onto its back
+    // (face up), so it lies flat instead of standing.
+    this._lieQuat = new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(1, 0, 0), Math.PI / 2
+    );
 
     // --- Effect registries: each is its own self-contained function ----------
     this.SPECIALS = [this.turretBlowoff]; // CPU tanks
     this.SPECIALS_PLANE = [this.wingBlowoff]; // CPU planes
+    this.SPECIALS_RIFLEMAN = [this.ragdollFling]; // riflemen
   }
 
   /** Build a coherent turret+gun assembly (the same shapes as the live tank's
@@ -214,6 +252,67 @@ class Destruction {
       tip.position.set(side * 3.55, 0, 0.15);
       g.add(tip);
     }
+
+    g.traverse((o) => {
+      if (o.isMesh) o.castShadow = true;
+    });
+    return g;
+  }
+
+  /** Build a coherent rifleman body (the same shapes as the live unit), origin
+   *  at the feet, for the ragdoll fling. */
+  _buildBodyAssembly(uniform) {
+    const g = new THREE.Group();
+    const coatMat = new THREE.MeshLambertMaterial({ color: uniform.coat });
+    const pantsMat = new THREE.MeshLambertMaterial({ color: uniform.pants });
+    const skinMat = new THREE.MeshLambertMaterial({ color: uniform.skin });
+    const darkMat = new THREE.MeshLambertMaterial({ color: 0x2b2e30 });
+
+    // Legs (pivots at the hips, hanging down) with boots.
+    const legGeo = new THREE.BoxGeometry(0.16, 0.72, 0.2).translate(0, -0.36, 0);
+    const bootGeo = new THREE.BoxGeometry(0.18, 0.12, 0.3);
+    for (const side of [-0.13, 0.13]) {
+      const leg = new THREE.Mesh(legGeo, pantsMat);
+      leg.position.set(side, 0.74, 0);
+      const boot = new THREE.Mesh(bootGeo, darkMat);
+      boot.position.set(0, -0.68, -0.05);
+      leg.add(boot);
+      g.add(leg);
+    }
+    // Torso + belt.
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.55, 0.28), coatMat);
+    torso.position.set(0, 1.05, 0);
+    g.add(torso);
+    const belt = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.08, 0.3), darkMat);
+    belt.position.set(0, 0.8, 0);
+    g.add(belt);
+    // Head + helmet.
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.28, 0.26), skinMat);
+    head.position.set(0, 1.48, 0);
+    g.add(head);
+    const helmet = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.14, 0.32), coatMat);
+    helmet.position.set(0, 1.62, 0);
+    g.add(helmet);
+    // Arms (static, angled forward to hold the rifle).
+    const armGeo = new THREE.BoxGeometry(0.12, 0.46, 0.14).translate(0, -0.18, 0);
+    for (const side of [-0.31, 0.31]) {
+      const arm = new THREE.Mesh(armGeo, coatMat);
+      arm.position.set(side, 1.26, 0);
+      arm.rotation.x = 1.05;
+      g.add(arm);
+    }
+    // Assault rifle (receiver + barrel + stock), held by the right hand.
+    const rifle = new THREE.Group();
+    rifle.position.set(0.31, 1.1, -0.35);
+    const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.1, 0.55), darkMat);
+    rifle.add(receiver);
+    const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.4), darkMat);
+    barrel.position.set(0, 0.02, -0.42);
+    rifle.add(barrel);
+    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.12, 0.2), pantsMat);
+    stock.position.set(0, -0.02, 0.32);
+    rifle.add(stock);
+    g.add(rifle);
 
     g.traverse((o) => {
       if (o.isMesh) o.castShadow = true;
@@ -386,6 +485,54 @@ class Destruction {
     e.group.scale.setScalar(1);
   }
 
+  /** Launch the coherent body assembly off the unit at `unit`, flung away from
+   *  the `killer` (or backward if there is none), with a backward flip. */
+  launchBody(unit, killer) {
+    const e = this._acquire(this.bodies, "_nextBody", (x) => x.active);
+    if (!e) return;
+    // The body's origin is the feet; the unit's position is the feet.
+    e.pos.copy(unit.position);
+    e.quat.copy(unit.group.quaternion); // the body is axis-aligned with the unit
+
+    // Fling away from the killer (horizontal); fall back to the unit's back.
+    if (killer) {
+      this._bodyDir.copy(unit.position).sub(killer.position);
+      this._bodyDir.y = 0;
+      if (this._bodyDir.lengthSq() < 1e-4) this._bodyDir.set(Math.sin(unit.yaw), 0, Math.cos(unit.yaw));
+      else this._bodyDir.normalize();
+    } else {
+      this._bodyDir.set(Math.sin(unit.yaw), 0, Math.cos(unit.yaw));
+    }
+    e.vel
+      .set(0, 0, 0)
+      .addScaledVector(this._bodyDir, BODY_OUT)
+      .addScaledVector(unit.velocity, BODY_INHERIT);
+    e.vel.y += BODY_UP;
+
+    // Backward flip: rotate around the horizontal axis perpendicular to the
+    // fling direction (the body tips over its heels), plus a little tumble.
+    this._bodyFlip.set(-this._bodyDir.z, 0, this._bodyDir.x).normalize();
+    e.angVel
+      .copy(this._bodyFlip)
+      .multiplyScalar(BODY_FLIP * (Math.random() < 0.5 ? -1 : 1));
+    e.angVel.x += (Math.random() - 0.5) * BODY_FLIP_JITTER;
+    e.angVel.y += (Math.random() - 0.5) * BODY_FLIP_JITTER;
+    e.angVel.z += (Math.random() - 0.5) * BODY_FLIP_JITTER;
+
+    // The lying-down pose: the unit's orientation tipped onto its back (face
+    // up), so the body rests flat on the ground instead of standing.
+    e.restQuat.copy(unit.group.quaternion).multiply(this._lieQuat);
+
+    e.active = true;
+    e.resting = false;
+    e.restTimer = 0;
+    e.scale = 1;
+    e.group.visible = true;
+    e.group.position.copy(e.pos);
+    e.group.quaternion.copy(e.quat);
+    e.group.scale.setScalar(1);
+  }
+
   // --- The effects (each is its own self-contained function) -----------------
 
   /** Turret blow-off: the hull reads as the normal debris; the turret+gun
@@ -418,6 +565,23 @@ class Destruction {
     this.deepBoom(dist);
   }
 
+  /** Ragdoll fling: the coherent body is knocked away from the killer and
+   *  tumbles over its heels; the blood splash + scattered body pieces and the
+   *  scream sell the hit. */
+  ragdollFling(unit, dist, killer) {
+    this.debris.spawnBody(unit.position, unit.velocity);
+    this.launchBody(unit, killer);
+    // Blood splash at torso height (the "hit" feedback).
+    this._bloodPt.copy(unit.position);
+    this._bloodPt.y += 1;
+    this.spawnSmoke(this._bloodPt, {
+      count: 30, size: 0.6, color: 0x7a1010, opacity: 0.9, life: 0.9,
+      sx: 0.6, sy: 0.8, sz: 0.6, vh: 3, vyLo: -0.5, vyHi: 2.5,
+      drift: 0, grav: 9.8,
+    });
+    this.audio.scream(dist);
+  }
+
   // --- Dispatch (the special path) --------------------------------------------
 
   /** Run one tank special effect (picked from SPECIALS). `dist` = meters from
@@ -431,6 +595,12 @@ class Destruction {
   specialPlane(plane, dist) {
     const fx = this.SPECIALS_PLANE[(Math.random() * this.SPECIALS_PLANE.length) | 0];
     fx.call(this, plane, dist);
+  }
+
+  /** Run one rifleman special effect (picked from SPECIALS_RIFLEMAN). */
+  specialRifleman(unit, dist, killer) {
+    const fx = this.SPECIALS_RIFLEMAN[(Math.random() * this.SPECIALS_RIFLEMAN.length) | 0];
+    fx.call(this, unit, dist, killer);
   }
 
   // --- Integration -----------------------------------------------------------
@@ -514,6 +684,45 @@ class Destruction {
       e.group.scale.setScalar(e.scale);
     }
 
+    // Flying body: same flight/settle as the turret (a ground-level event).
+    for (const e of this.bodies) {
+      if (!e.active) continue;
+      if (e.resting) {
+        e.restTimer += dt;
+        if (e.restTimer > FLY_REST_TIME) {
+          e.scale = Math.max(0, e.scale - dt / FLY_FADE_TIME);
+          if (e.scale <= 0) {
+            e.active = false;
+            e.group.visible = false;
+            continue;
+          }
+        }
+      } else {
+        e.vel.y -= FLY_GRAVITY * dt;
+        e.vel.multiplyScalar(Math.max(0, 1 - FLY_AIR_DRAG * dt));
+        e.pos.addScaledVector(e.vel, dt);
+        if (e.pos.y <= this.terrain.heightAt(e.pos.x, e.pos.z)) {
+          // Settle lying flat on the ground (on its back), lifted so it doesn't
+          // sink: snap to the lying-down pose and rest the body's depth up.
+          e.pos.y = this.terrain.heightAt(e.pos.x, e.pos.z) + BODY_LIE_LIFT;
+          e.quat.copy(e.restQuat);
+          e.resting = true;
+          e.vel.set(0, 0, 0);
+          e.angVel.set(0, 0, 0);
+        }
+      }
+      // Tumble.
+      const w = e.angVel.length();
+      if (w > 1e-4) {
+        this._axis.copy(e.angVel).divideScalar(w);
+        this._q.setFromAxisAngle(this._axis, w * dt);
+        e.quat.premultiply(this._q);
+      }
+      e.group.position.copy(e.pos);
+      e.group.quaternion.copy(e.quat);
+      e.group.scale.setScalar(e.scale);
+    }
+
     // Fireballs: expand and fade over their short life.
     for (const e of this.fireballs) {
       if (e.life <= 0) continue;
@@ -575,6 +784,10 @@ class Destruction {
       e.group.visible = false;
     }
     for (const e of this.wings) {
+      e.active = false;
+      e.group.visible = false;
+    }
+    for (const e of this.bodies) {
       e.active = false;
       e.group.visible = false;
     }
