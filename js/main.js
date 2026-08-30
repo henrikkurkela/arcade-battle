@@ -585,8 +585,13 @@ const Game = (() => {
   function shooterName(owner) {
     if (owner === player) return "You";
     if (owner.team === "aa") return "an AA gun";
-    if (owner.team === "riflemen") return "A rifleman";
+    if (owner.team === "riflemen") return "a rifleman";
     return owner.callsign;
+  }
+
+  /** Capitalize the first character (for message-feed sentence starts). */
+  function cap(s) {
+    return s.charAt(0).toUpperCase() + s.slice(1);
   }
 
   /** A unit was destroyed by a weapon hit: dispatch to the right handler. */
@@ -619,7 +624,7 @@ const Game = (() => {
       count: 22, size: 2.6, color: 0x2e2e2e, opacity: 0.85, life: 1.8,
       sx: 2.6, sy: 2.2, sz: 2.6, vh: 3, vyLo: 2.5, vyHi: 7,
     });
-    addMessage("You knocked out an AA gun.");
+    addMessage("You knocked out an AA gun");
   }
 
   /** Concrete pad with a yellow hazard border and painted "GARAGE" text,
@@ -886,7 +891,7 @@ const Game = (() => {
       addMessage("You destroyed " + cp.callsign);
     } else {
       shooterStatsFor(killer).kills++;
-      addMessage(shooterName(killer) + " destroyed " + cp.callsign);
+      addMessage(cap(shooterName(killer)) + " destroyed " + cp.callsign);
     }
   }
 
@@ -959,7 +964,7 @@ const Game = (() => {
     } else if (killer) {
       if (killer.team === "riflemen") rifleKills++;
       else shooterStatsFor(killer).kills++;
-      addMessage(shooterName(killer) + " killed a rifleman");
+      addMessage(cap(shooterName(killer)) + " killed a rifleman");
     }
   }
 
@@ -1055,7 +1060,7 @@ const Game = (() => {
       addMessage("You shot down " + cp.callsign);
     } else if (killer) {
       if (killer.team !== "aa" && killer.team !== "riflemen") shooterStatsFor(killer).kills++;
-      addMessage(shooterName(killer) + " shot down " + cp.callsign);
+      addMessage(cap(shooterName(killer)) + " shot down " + cp.callsign);
     }
   }
 
@@ -2414,7 +2419,7 @@ const Game = (() => {
   buildWorld();
   timeToggle.textContent = nightMode ? "NIGHT" : "DAY";
   applyEnvironment(nightMix);
-  showOverlay("ARCADE TANK", "", "Drive");
+  showOverlay("ARCADE BATTLE", "", "Drive");
   updateTitleOverlay(); // set the text/button for the selected vehicle (M9)
   requestAnimationFrame(frame);
 
