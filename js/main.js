@@ -1928,6 +1928,12 @@ const Game = (() => {
       saveSettings();
       return;
     }
+    // Camera mode: 1 = chase (3rd person), 2 = hatch (tank) / canopy (plane).
+    if (code === "Digit1" || code === "Digit2") {
+      if (vehicle === VEHICLE_TANK) chaseCam.mode = code === "Digit1" ? "chase" : "hatch";
+      else planeCam.mode = code === "Digit1" ? "chase" : "canopy";
+      return;
+    }
     if (code === "Enter" || code === "Space") {
       if (state === "ready") start();
       else if (state === "destroyed") restart();

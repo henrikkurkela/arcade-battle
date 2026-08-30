@@ -513,6 +513,10 @@ class Tank {
     const hatch = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 0.5), darkMat);
     hatch.position.set(0.45, 0.42, 0.35);
     this.turret.add(hatch);
+    // Empty marker just above the hatch for the hatch camera (key 2).
+    this.hatchCamObj = new THREE.Object3D();
+    this.hatchCamObj.position.set(0.45, 0.6, 0.35);
+    this.turret.add(this.hatchCamObj);
 
     // Barrel (points -Z) with a muzzle brake near the tip. The rear end
     // extends past the elevation hinge (z = 0) so it stays buried inside the

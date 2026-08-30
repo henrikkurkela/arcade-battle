@@ -77,6 +77,8 @@ class Plane {
     // Muzzle: just ahead of the nose spinner (local 0, 0, -2.45).
     this._muzzleLocal = new THREE.Vector3(0, -0.05, -2.6);
     this._muzzleWorld = new THREE.Vector3();
+    // Canopy camera: just above the canopy, forward of the propeller (local).
+    this._canopyLocal = new THREE.Vector3(0, 0.95, 0.35);
 
     // Control-surface deflections (radians), eased toward input.
     this.aileronDefl = 0;
@@ -121,6 +123,14 @@ class Plane {
   muzzleWorld(out) {
     return out
       .copy(this._muzzleLocal)
+      .applyQuaternion(this.quaternion)
+      .add(this.position);
+  }
+
+  /** World-space canopy camera point (write into `out` to avoid allocation). */
+  canopyWorld(out) {
+    return out
+      .copy(this._canopyLocal)
       .applyQuaternion(this.quaternion)
       .add(this.position);
   }
