@@ -1964,9 +1964,11 @@ const Game = (() => {
     const hpPct = Math.max(0, (unit.hp / unit.maxHp) * 100);
     hpFill.style.width = hpPct + "%";
     hpFill.style.background = hpPct > 50 ? "#4caf50" : hpPct > 25 ? "#ffb300" : "#f44336";
-    // Speed (km/h) and heading (degrees + compass point).
+    // Speed (km/h) and heading (degrees + compass point). In the tank the
+    // heading follows the TURRET (the camera orbits with it), not the hull.
     hudSpeed.textContent = Math.round((isPlane ? unit.forwardSpeed : Math.abs(unit.speed)) * 3.6);
-    const bearing = ((360 - THREE.MathUtils.radToDeg(unit.yaw)) % 360 + 360) % 360;
+    const heading = isPlane ? unit.yaw : unit.yaw + unit.turretYaw;
+    const bearing = ((360 - THREE.MathUtils.radToDeg(heading)) % 360 + 360) % 360;
     const card = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(bearing / 45) % 8];
     hudHeading.textContent = Math.round(bearing) + "\u00B0 " + card;
     // Slide the tape so the current bearing sits under the center caret.
