@@ -199,8 +199,14 @@ class Shells {
         owner: null,
         team: "",
         life: 0,
+        damage: SHELL_DAMAGE,
+        damageMin: SHELL_DAMAGE_MIN,
       });
     }
+    // Base splash damage, exposed so main.js can scale the player's shells
+    // (loadouts) and pass the scaled value into fire().
+    this.baseDamage = SHELL_DAMAGE;
+    this.baseDamageMin = SHELL_DAMAGE_MIN;
     // Set by main.js: (owner, victim, dealt) => void, called on every splash hit.
     this.onDamage = null;
     // Set by main.js: (owner, victim) => void, called on a lethal splash hit.
@@ -209,8 +215,10 @@ class Shells {
     this.onAADisabled = null;
   }
 
-  /** Launch one shell. Drops it if the pool is full. Returns true if launched. */
-  fire(owner, muzzleWorld, dir) {
+  /** Launch one shell. Drops it if the pool is full. Returns true if launched.
+   *  `damage`/`damageMin` override the base splash damage (loadouts); omit for
+   *  the standard value. */
+  fire(owner, muzzleWorld, dir, damage, damageMin) {
     for (let i = 0; i < this.pool.length; i++) {
       const e = this.pool[(this._nextFree + i) % this.pool.length];
       if (e.active) continue;
@@ -221,6 +229,8 @@ class Shells {
       e.pos.copy(muzzleWorld);
       e.vel.copy(owner.velocity).addScaledVector(dir, SHELL_SPEED);
       e.life = SHELL_LIFE;
+      e.damage = damage ?? this.baseDamage;
+      e.damageMin = damageMin ?? this.baseDamageMin;
       e.group.visible = true;
       e.group.position.copy(e.pos);
       return true;
@@ -239,7 +249,7 @@ class Shells {
       const d = e.pos.distanceTo(u.position);
       if (d > BLAST_RADIUS) continue;
       const tFall = 1 - d / BLAST_RADIUS; // 1 at center -> 0 at edge
-      const raw = Math.round(lerp(SHELL_DAMAGE_MIN, SHELL_DAMAGE, smoothstep(tFall)));
+      const raw = Math.round(lerp(e.damageMin, e.damage, smoothstep(tFall)));
       const dealt = u.takeDamage(raw, "hard");
       if (dealt > 0 && this.onDamage) this.onDamage(e.owner, u, dealt);
       if (dealt > 0 && u.hp <= 0 && this.onKill) this.onKill(e.owner, u);
@@ -253,7 +263,7 @@ class Shells {
         const d = e.pos.distanceTo(g.position);
         if (d > BLAST_RADIUS) continue;
         const tFall = 1 - d / BLAST_RADIUS;
-        const raw = Math.round(lerp(SHELL_DAMAGE_MIN, SHELL_DAMAGE, smoothstep(tFall)));
+        const raw = Math.round(lerp(e.damageMin, e.damage, smoothstep(tFall)));
         if (g.takeDamage(raw, "hard") && this.onAADisabled) this.onAADisabled(g);
       }
     }

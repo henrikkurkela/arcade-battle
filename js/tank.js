@@ -176,6 +176,14 @@ class Tank {
     this._muzzleWorld = new THREE.Vector3();
     this._barrelQuat = new THREE.Quaternion();
 
+    // Loadout multipliers (player only; CPU units keep the default 1). Set by
+    // main.js applyLoadout(): turretRateMul scales the turret slew cap, speedMul
+    // scales top speed. turretCone caps the hull-relative turret yaw to a cone
+    // in front of the hull (Infinity = full 360 deg).
+    this.turretRateMul = 1;
+    this.speedMul = 1;
+    this.turretCone = Infinity;
+
     // Track/wheel animation state (filled by _buildModel).
     this._links = [];
     this._wheels = [];
@@ -287,7 +295,7 @@ class Tank {
     const climb = Math.max(0, slopeAlong);
     const t = clamp(1 - (climb / SLOPE_TAN) * (climb / SLOPE_TAN), 0, 1);
     const maxFwd =
-      MAX_SPEED_FWD * (t + Math.max(0, -slopeAlong) * DOWNHILL_BOOST / SLOPE_TAN);
+      MAX_SPEED_FWD * this.speedMul * (t + Math.max(0, -slopeAlong) * DOWNHILL_BOOST / SLOPE_TAN);
 
     // Longitudinal: throttle scaled by traction, coasting feels the slope
     // (gravity bleeds uphill, boosts downhill), brake decelerates hard.
@@ -341,15 +349,18 @@ class Tank {
     // rate-limited; pitch is also clamped to its min/max.
     this.turretYaw += clamp(
       -control.turretDX * MOUSE_SENS,
-      -PLAYER_TURRET_YAW_RATE * dt,
-      PLAYER_TURRET_YAW_RATE * dt
+      -PLAYER_TURRET_YAW_RATE * this.turretRateMul * dt,
+      PLAYER_TURRET_YAW_RATE * this.turretRateMul * dt
     );
     this.turretPitch += clamp(
       -control.turretDY * MOUSE_SENS,
-      -TURRET_PITCH_SLEW_RATE * dt,
-      TURRET_PITCH_SLEW_RATE * dt
+      -TURRET_PITCH_SLEW_RATE * this.turretRateMul * dt,
+      TURRET_PITCH_SLEW_RATE * this.turretRateMul * dt
     );
     this.turretPitch = clamp(this.turretPitch, TURRET_PITCH_MIN, TURRET_PITCH_MAX);
+    // Traverse cone (assault gun): the turret can't swing past the hull's
+    // forward by more than turretCone — you aim by steering the hull.
+    this.turretYaw = clamp(this.turretYaw, -this.turretCone, this.turretCone);
 
     this._updateTracks(dt, this.trackSpeed);
     this._syncGroup();

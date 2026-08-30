@@ -85,6 +85,12 @@ class Plane {
     this.elevatorDefl = 0;
     this.rudderDefl = 0;
 
+    // Loadout multipliers (player only; CPU planes keep the default 1). Set by
+    // main.js applyLoadout(): agilityMul scales roll/pitch rate (nimbleness),
+    // speedMul scales thrust (top speed).
+    this.agilityMul = 1;
+    this.speedMul = 1;
+
     // Scratch objects (avoid per-frame allocations).
     this._fwd = new THREE.Vector3();
     this._up = new THREE.Vector3();
@@ -216,8 +222,8 @@ class Plane {
       this.pitch = easeToward(this.pitch, TAXI_PITCH, GROUND_LEVEL_RATE, dt);
       this.roll = easeToward(this.roll, 0, GROUND_LEVEL_RATE, dt);
     } else {
-      this.pitch += pitchIn * PLANE_PITCH_RATE * dt;
-      this.roll += rollIn * PLANE_ROLL_RATE * dt;
+      this.pitch += pitchIn * PLANE_PITCH_RATE * this.agilityMul * dt;
+      this.roll += rollIn * PLANE_ROLL_RATE * this.agilityMul * dt;
     }
     this.yaw += rudderIn * PLANE_RUDDER_RATE * dt;
 
@@ -269,7 +275,7 @@ class Plane {
     }
 
     // Forces: thrust, gravity, drag.
-    v.addScaledVector(this.forward, PLANE_THRUST * this.throttle * dt);
+    v.addScaledVector(this.forward, PLANE_THRUST * this.speedMul * this.throttle * dt);
     v.y -= PLANE_GRAVITY * dt;
     const sp = v.length();
     v.multiplyScalar(Math.max(0, 1 - (PLANE_DRAG_Q * sp + PLANE_DRAG_L) * dt));

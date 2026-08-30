@@ -204,6 +204,46 @@ const Game = (() => {
   // Player plane vs CPU plane: a body collision is instant player death.
   const PLANE_RAM_RANGE = 4.4; // m between two planes => collision
 
+  // --- Loadouts (player only) --------------------------------------------------
+  // Tuning block: every number below is a starting value — adjust freely. A
+  // loadout is a per-vehicle stat set the player picks on the title screen.
+  // Only the active player unit is affected; CPU units keep the defaults.
+  //   turretRate   — fraction of the base turret slew (1 = normal)
+  //   mgDamage     — MG damage multiplier (1 = normal)
+  //   mgRate       — MG fire-rate multiplier (1 = normal; >1 = faster)
+  //   shellDamage  — main-gun splash damage multiplier (1 = normal)
+  //   topSpeed     — top-speed multiplier (1 = normal)
+  //   cannon       — plane cannon enabled
+  //   rockets      — plane rockets enabled
+  //   unlimitedRockets — rockets never run out (no ammo / earn needed)
+  //   heatPerShot  — gun-heat-per-shot fraction (1 = normal; lower = slower overheat)
+  //   agility      — plane roll/pitch rate multiplier (1 = normal; >1 = more nimble)
+  //   speed        — plane thrust multiplier (1 = normal; >1 = faster)
+  //   turretCone   — tank traverse cone, half-angle in radians (Infinity = 360 deg)
+  const ASSAULT_GUN_CONE_DEG = 20; // assault gun: max turret swing off the hull nose
+  const LOADOUTS = {
+    tank: [
+      { id: "standard", name: "STANDARD", desc: "Balanced gun and tracks.",
+        turretRate: 1.0, mgDamage: 1.0, mgRate: 1.0, shellDamage: 1.0, topSpeed: 1.0 },
+      { id: "assault", name: "ASSAULT GUN", desc: "Slow, limited-traverse turret; +30% MG and shell damage.",
+        turretRate: 0.5, mgDamage: 1.3, mgRate: 1.0, shellDamage: 1.3, topSpeed: 1.0,
+        turretCone: THREE.MathUtils.degToRad(ASSAULT_GUN_CONE_DEG) },
+      { id: "light", name: "LIGHT TANK", desc: "Fast MG and tracks; -30% shell damage.",
+        turretRate: 1.0, mgDamage: 1.0, mgRate: 1.3, shellDamage: 0.7, topSpeed: 1.3 },
+    ],
+    plane: [
+      { id: "standard", name: "STANDARD", desc: "Cannon and rockets.",
+        cannon: true, rockets: true, unlimitedRockets: false, heatPerShot: 1.0,
+        agility: 1.0, speed: 1.0 },
+      { id: "tankbuster", name: "TANK BUSTER", desc: "No cannon, unlimited rockets; heavier and slower.",
+        cannon: false, rockets: true, unlimitedRockets: true, heatPerShot: 1.0,
+        agility: 0.9, speed: 0.9 },
+      { id: "dogfighter", name: "DOGFIGHTER", desc: "No rockets, cannon overheats 2x slower; more agile and faster.",
+        cannon: true, rockets: false, unlimitedRockets: false, heatPerShot: 0.5,
+        agility: 1.1, speed: 1.1 },
+    ],
+  };
+
   // --- Title-screen camera ---------------------------------------------------
   const ORBIT_RADIUS = 60; // m from the map center
   const ORBIT_HEIGHT = 30; // m above the ground at the map center
@@ -263,6 +303,11 @@ const Game = (() => {
   const garageHint = document.getElementById("garage-hint");
   const vehicleControl = document.getElementById("vehicle-control");
   const vehicleToggle = document.getElementById("vehicle-toggle");
+  const loadoutControl = document.getElementById("loadout-control");
+  const loadoutToggle = document.getElementById("loadout-toggle");
+  const loadoutDesc = document.getElementById("loadout-desc");
+  const planeWeaponsHint = document.getElementById("plane-weapons-hint");
+  const planeRocketHint = document.getElementById("plane-rocket-hint");
   const hudAltRow = document.getElementById("hud-alt-row");
   const hudAlt = document.getElementById("hud-alt");
   const hudThrottleRow = document.getElementById("hud-throttle-row");
@@ -471,6 +516,17 @@ const Game = (() => {
   let planeController = null;
   let player = null; // the active player unit (tank or plane)
   let vehicle = VEHICLE_TANK; // selected vehicle (persisted)
+  let tankLoadout = "standard"; // selected tank loadout (persisted)
+  let planeLoadout = "standard"; // selected plane loadout (persisted)
+  // Effective loadout values for the ACTIVE vehicle, set by applyLoadout().
+  // Only the active vehicle's fire sites read these.
+  let mgDamageMul = 1;
+  let mgRateMul = 1;
+  let shellDamageMul = 1;
+  let heatPerShotMul = 1;
+  let cannonEnabled = true;
+  let rocketsEnabled = true;
+  let unlimitedRockets = false;
   // Plane combat state (M9). The gun heat/overheat state is shared with the
   // tank's MG (only one vehicle is active at a time).
   let rocketAmmo = ROCKET_MAX_AMMO;
@@ -799,6 +855,7 @@ const Game = (() => {
     landingHint.classList.add("hidden");
     vehicleToggle.textContent = isPlane ? "PLANE" : "TANK";
     updateTitleOverlay();
+    applyLoadout(); // re-apply the (new) vehicle's loadout
   }
 
   /** Set the title-screen text and start button for the selected vehicle. */
@@ -821,6 +878,69 @@ const Game = (() => {
     vehicle = v;
     applyVehicle();
     saveSettings();
+  }
+
+  // --- Loadouts ---------------------------------------------------------------
+  /** The loadout object for the active vehicle (falls back to the first). */
+  function activeLoadout() {
+    const list = LOADOUTS[vehicle];
+    const id = vehicle === VEHICLE_TANK ? tankLoadout : planeLoadout;
+    return list.find((l) => l.id === id) || list[0];
+  }
+
+  /** Apply the active vehicle's loadout to the player unit and the fire sites.
+   *  CPU units are untouched (their Tank/Plane keep the default multipliers). */
+  function applyLoadout() {
+    const lo = activeLoadout();
+    // Tank unit-object multipliers (read by tank.update()).
+    tank.turretRateMul = lo.turretRate ?? 1;
+    tank.speedMul = lo.topSpeed ?? 1;
+    tank.turretCone = lo.turretCone ?? Infinity;
+    // Plane unit-object multipliers (read by plane.update()).
+    plane.agilityMul = lo.agility ?? 1;
+    plane.speedMul = lo.speed ?? 1;
+    // Effective values read at the fire sites (only the active vehicle fires).
+    mgDamageMul = lo.mgDamage ?? 1;
+    mgRateMul = lo.mgRate ?? 1;
+    shellDamageMul = lo.shellDamage ?? 1;
+    heatPerShotMul = lo.heatPerShot ?? 1;
+    cannonEnabled = lo.cannon ?? true;
+    rocketsEnabled = lo.rockets ?? true;
+    unlimitedRockets = lo.unlimitedRockets ?? false;
+    // HUD: the rocket row is only useful for a plane that actually has rockets.
+    hudRocketsRow.classList.toggle("hidden", !(vehicle === VEHICLE_PLANE && rocketsEnabled));
+    updateLoadoutUI();
+    updatePlaneHints();
+    saveSettings();
+  }
+
+  /** Cycle the active vehicle's loadout to the next one (title screen). */
+  function cycleLoadout() {
+    const list = LOADOUTS[vehicle];
+    const cur = activeLoadout();
+    const next = list[(list.indexOf(cur) + 1) % list.length];
+    if (vehicle === VEHICLE_TANK) tankLoadout = next.id;
+    else planeLoadout = next.id;
+    applyLoadout();
+  }
+
+  /** Sync the loadout button label + description to the active loadout. */
+  function updateLoadoutUI() {
+    const lo = activeLoadout();
+    loadoutToggle.textContent = lo.name;
+    loadoutDesc.textContent = lo.desc;
+  }
+
+  /** Reflect the active plane loadout's removed weapons in the control hints. */
+  function updatePlaneHints() {
+    if (vehicle !== VEHICLE_PLANE) return;
+    const lo = activeLoadout();
+    const parts = [];
+    if (lo.cannon) parts.push("LEFT CLICK / SPACE fire");
+    if (lo.rockets) parts.push(lo.unlimitedRockets ? "RIGHT CLICK / X rockets (unlimited)" : "RIGHT CLICK / X rockets");
+    planeWeaponsHint.textContent = parts.join("  \u00B7  ");
+    // The "earn a rocket" hint only applies to a finite-rocket loadout.
+    planeRocketHint.classList.toggle("hidden", !(lo.rockets && !lo.unlimitedRockets));
   }
 
   // --- AI fleet (M4) ---------------------------------------------------------
@@ -1318,6 +1438,7 @@ const Game = (() => {
   /** Bank player damage toward rockets: every ROCKET_DAMAGE_PER_ROCKET dealt
    *  (cannon or rocket) earns one, up to the cap. No banking while full (M9). */
   function awardRocketDamage(dealt) {
+    if (!rocketsEnabled || unlimitedRockets) return; // no rockets / unlimited
     if (rocketAmmo >= ROCKET_MAX_AMMO) return;
     rocketDamageAccum += dealt;
     while (
@@ -1688,6 +1809,8 @@ const Game = (() => {
         SETTINGS_KEY,
         JSON.stringify({
           vehicle,
+          tankLoadout,
+          planeLoadout,
           cpuCount,
           riflemanCount,
           planeCount,
@@ -1737,6 +1860,10 @@ const Game = (() => {
       ? Math.max(0, Math.round(savedSettings.bestScore))
       : 0;
   vehicle = savedSettings.vehicle === VEHICLE_PLANE ? VEHICLE_PLANE : VEHICLE_TANK;
+  tankLoadout = LOADOUTS.tank.some((l) => l.id === savedSettings.tankLoadout)
+    ? savedSettings.tankLoadout : "standard";
+  planeLoadout = LOADOUTS.plane.some((l) => l.id === savedSettings.planeLoadout)
+    ? savedSettings.planeLoadout : "standard";
   EngineAudio.setMuted(!!savedSettings.muted);
   mutedBadge.classList.toggle("hidden", !EngineAudio.isMuted());
   // Performance meter (H): hidden by default; the choice persists.
@@ -1809,6 +1936,8 @@ const Game = (() => {
     overlayBtn.textContent = btnLabel;
     // The count controls are only useful before a run (ready/destroyed).
     vehicleControl.classList.toggle("hidden", state === "paused");
+    loadoutControl.classList.toggle("hidden", state === "paused");
+    loadoutDesc.classList.toggle("hidden", state === "paused");
     cpuControl.classList.toggle("hidden", state === "paused");
     rifleControl.classList.toggle("hidden", state === "paused");
     planeControl.classList.toggle("hidden", state === "paused");
@@ -1949,6 +2078,7 @@ const Game = (() => {
   vehicleToggle.addEventListener("click", () =>
     setVehicle(vehicle === VEHICLE_TANK ? VEHICLE_PLANE : VEHICLE_TANK)
   );
+  loadoutToggle.addEventListener("click", () => { unlockAudio(); cycleLoadout(); });
   cpuMinus.addEventListener("click", () => { unlockAudio(); setCpuCount(cpuCount - 1); });
   cpuPlus.addEventListener("click", () => { unlockAudio(); setCpuCount(cpuCount + 1); });
   rifleMinus.addEventListener("click", () => { unlockAudio(); setRiflemanCount(riflemanCount - 1); });
@@ -2038,9 +2168,9 @@ const Game = (() => {
         Math.round(unit.position.y - terrain.heightAt(unit.position.x, unit.position.z))
       );
       hudThrottle.textContent = Math.round(unit.throttle * 100);
-      // Rocket count (red while empty).
-      hudRockets.textContent = rocketAmmo;
-      hudRockets.classList.toggle("empty", rocketAmmo === 0);
+      // Rocket count (red while empty; "∞" for the unlimited loadout).
+      hudRockets.textContent = unlimitedRockets ? "\u221E" : rocketAmmo;
+      hudRockets.classList.toggle("empty", !unlimitedRockets && rocketAmmo === 0);
       // STALL warning: a beep the moment it appears.
       const stalling = state === "playing" && unit.forwardSpeed < STALL_WARN;
       stall.classList.toggle("hidden", !stalling);
@@ -2253,10 +2383,10 @@ const Game = (() => {
         // overheates and cannot fire until fully cool.
         mgCooldown -= dt;
         if (control.firing && mgCooldown <= 0 && !gunOverheated) {
-          mgCooldown = MG_FIRE_INTERVAL;
-          gunTemp = Math.min(GUN_MAX_TEMP, gunTemp + GUN_HEAT_PER_SHOT);
+          mgCooldown = MG_FIRE_INTERVAL / mgRateMul;
+          gunTemp = Math.min(GUN_MAX_TEMP, gunTemp + GUN_HEAT_PER_SHOT * heatPerShotMul);
           if (gunTemp >= GUN_MAX_TEMP) gunOverheated = true;
-          tracers.fire(tank, tank.mgMuzzleWorld(_muzzle), tank.barrelDir(_barrel), MG_DAMAGE_PLAYER);
+          tracers.fire(tank, tank.mgMuzzleWorld(_muzzle), tank.barrelDir(_barrel), MG_DAMAGE_PLAYER * mgDamageMul);
           flashes.flash(_muzzle);
           EngineAudio.mgFire(0);
         }
@@ -2269,7 +2399,8 @@ const Game = (() => {
         // SHELL_RELOAD, so holding the button fires again once it is ready.
         shellReload = Math.max(0, shellReload - dt);
         if (control.shellFiring && shellReload <= 0) {
-          if (shells.fire(tank, tank.muzzleWorld(_muzzle), tank.barrelDir(_barrel))) {
+          if (shells.fire(tank, tank.muzzleWorld(_muzzle), tank.barrelDir(_barrel),
+            shells.baseDamage * shellDamageMul, shells.baseDamageMin * shellDamageMul)) {
             shellReload = SHELL_RELOAD;
             flashes.flash(_muzzle);
             EngineAudio.shellLaunch(0);
@@ -2287,9 +2418,9 @@ const Game = (() => {
         // Cannon: hold Space. Sustained fire heats the gun; at GUN_MAX_TEMP it
         // overheates and cannot fire until fully cool.
         mgCooldown -= dt;
-        if (pc.firing && mgCooldown <= 0 && !gunOverheated) {
+        if (cannonEnabled && pc.firing && mgCooldown <= 0 && !gunOverheated) {
           mgCooldown = PLAYER_FIRE_INTERVAL;
-          gunTemp = Math.min(GUN_MAX_TEMP, gunTemp + GUN_HEAT_PER_SHOT);
+          gunTemp = Math.min(GUN_MAX_TEMP, gunTemp + GUN_HEAT_PER_SHOT * heatPerShotMul);
           if (gunTemp >= GUN_MAX_TEMP) gunOverheated = true;
           projectiles.fire(plane, plane.muzzleWorld(_muzzle), plane.forward, PLAYER_BULLET_DAMAGE, "soft");
           flashes.flash(_muzzle);
@@ -2302,9 +2433,9 @@ const Game = (() => {
 
         // Rockets: hold X. Finite ammo, earned by dealing damage.
         rocketFireCooldown -= dt;
-        if (pc.rocketFiring && rocketFireCooldown <= 0 && rocketAmmo > 0) {
+        if (rocketsEnabled && pc.rocketFiring && rocketFireCooldown <= 0 && (unlimitedRockets || rocketAmmo > 0)) {
           if (rockets.fire(plane, plane.muzzleWorld(_muzzle), plane.forward, "hard")) {
-            rocketAmmo--;
+            if (!unlimitedRockets) rocketAmmo--;
             rocketFireCooldown = ROCKET_FIRE_INTERVAL;
             flashes.flash(_muzzle);
             EngineAudio.rocketLaunch(0);
@@ -2596,6 +2727,7 @@ const Game = (() => {
   applyEnvironment(nightMix);
   showOverlay("ARCADE BATTLE", "", "Drive");
   updateTitleOverlay(); // set the text/button for the selected vehicle (M9)
+  applyLoadout(); // apply the persisted loadout to the player unit + UI
   requestAnimationFrame(frame);
 
   return { onKeyDown, onPointerUnlock };

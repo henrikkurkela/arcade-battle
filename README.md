@@ -16,8 +16,9 @@ relative ease.
 # Arcade Battle
 
 A 3D arcade combat game. Pick a vehicle on the title screen — a tank or a
-fighter plane — and fight over procedurally generated terrain dotted with
-trees and rocks. The map is shared with a fleet of hostile CPU tanks (which
+fighter plane — and a loadout to match your style, then fight over
+procedurally generated terrain dotted with trees and rocks. The map is shared
+with a fleet of hostile CPU tanks (which
 hunt you **and each other**), a squad of riflemen, a fleet of CPU planes, and
 a ring of anti-aircraft guns. Fight back with your guns, retreat to the
 garage to repair, and rack up kills.
@@ -36,9 +37,10 @@ npx serve .
 
 ## Controls
 
-The title screen has a VEHICLE toggle (TANK / PLANE); the start button reads
-"Drive" or "Fly" to match. M, P, R, H and Enter/Space work in both vehicles
-(mute, pause, restart, performance meter, start/restart).
+The title screen has a VEHICLE toggle (TANK / PLANE) and a LOADOUT toggle
+(picks the loadout for the selected vehicle — see Gameplay); the start button
+reads "Drive" or "Fly" to match. M, P, R, H and Enter/Space work in both
+vehicles (mute, pause, restart, performance meter, start/restart).
 
 ### Tank
 
@@ -72,6 +74,17 @@ vehicles) and when the plane's STALL warning appears.
 
 - **Vehicles:** the title screen's VEHICLE toggle switches between the tank
   and the plane. Your best score is shared between the two.
+- **Loadouts:** the title screen's LOADOUT toggle picks a loadout for the
+  selected vehicle (the choice is remembered per vehicle and persists across
+  reloads). Only your own unit is affected — the CPU fleet keeps its standard
+  stats.
+  - *Tank:* **Standard** (balanced), **Assault Gun** (slow, limited-traverse
+    turret but +30% MG and shell damage — with the turret's traverse capped to
+    a narrow cone in front of the hull, you aim by steering), and **Light Tank**
+    (faster MG and tracks but -30% shell damage).
+  - *Plane:* **Standard** (cannon + rockets), **Tank Buster** (no cannon,
+    unlimited rockets, but heavier and slower), and **Dogfighter** (no rockets,
+    the cannon overheats 2x slower, but more agile and faster).
 - **Title screen:** the world idles behind the overlay (engine ticking over).
    Set the counts with the title-screen controls — TANKS (CPU tanks, 0–16,
    four by default; 0 shows "TANKS 0"), RIFLEMEN (0–16, four
@@ -192,31 +205,38 @@ vehicles) and when the plane's STALL warning appears.
   heat bar, crosshair, stall/overheat/repair/landing hints, the H-toggled
   performance meter (FPS, frame time, CPU/GPU split, draw calls/triangles,
   active unit/effect counts, and a rough CPU/GPU/capped verdict)), overlays (incl.
-  the scoreboard), the vehicle toggle, the AI tank fleet (respawn, kill
-  attribution, per-shooter score tallies), the rifleman squad, the CPU plane
-  fleet, the AA-gun ring, the garage base zone (flat zone, painted concrete
-  decal with hazard border, tank repair hint, plane landing), tank-tank and
-  tank-obstacle collisions, plane crash/ram checks, dust puffs, damage smoke,
-  the day/night environment blend, and the persisted settings (localStorage:
-  vehicle, enemy/rifleman/plane/AA counts, volumes, mute, day/night, best
-  score, performance meter visibility).
+   the scoreboard), the vehicle and loadout toggles (a per-vehicle table of
+   stat sets — damage/fire-rate/speed/agility multipliers, the plane's
+   cannon/rocket toggles and heat rate, and the tank's turret rate, top speed
+   and traverse cone — applied to the player unit only), the AI tank fleet
+   (respawn, kill attribution, per-shooter score tallies), the rifleman squad,
+   the CPU plane fleet, the AA-gun ring, the garage base zone (flat zone,
+   painted concrete decal with hazard border, tank repair hint, plane landing),
+   tank-tank and tank-obstacle collisions, plane crash/ram checks, dust puffs,
+   damage smoke, the day/night environment blend, and the persisted settings
+   (localStorage: vehicle, loadouts, enemy/rifleman/plane/AA counts, volumes,
+   mute, day/night, best score, performance meter visibility).
 - `js/tank.js` — the tank (primitive-based model: hull, tracks with road
   wheels, yawing turret with a pitching barrel, muzzle marker, optional
   livery color) and the arcade ground-vehicle model: throttle/brake/coast,
   speed-scaled steering that inverts in reverse, terrain following (hull y
   from the four corners, eased pitch/roll), a slope limit that kills forward
-  motion on steep ground, and the mouse-driven turret (free yaw, clamped
-  pitch). `update(dt, control)` takes a continuous control vector from a
+   motion on steep ground, and the mouse-driven turret (yaw, clamped pitch).
+   Loadout multipliers (player only, set by main.js) scale the turret slew
+   rate and top speed, and an optional traverse cone caps the hull-relative
+   turret yaw to a cone in front of the hull (the assault gun). `update(dt,
+   control)` takes a continuous control vector from a
   controller rather than reading the keyboard, and exposes `hp`/`alive`/
   `team`, `takeDamage()`, and world-space muzzle/barrel directions for the
   weapon systems.
 - `js/plane.js` — the plane (primitive-based low-wing single-seater: fuselage,
   tapered tail, spinner + propeller, canopy, wing with ailerons, tailplane +
   elevator, fin + rudder, fixed landing gear) and the arcade flight model:
-  pitch/bank/rudder/throttle, turning from banking, "sticky" lift that fades
-  out at low forward speed (stall), thrust/gravity/drag, and a branch fix that
-  keeps the control law right through loops. `takeDamage()` applies soft
-  (cannon) and hard (rocket) armor.
+   pitch/bank/rudder/throttle, turning from banking, "sticky" lift that fades
+   out at low forward speed (stall), thrust/gravity/drag, and a branch fix that
+   keeps the control law right through loops. Loadout multipliers (player only,
+   set by main.js) scale the roll/pitch rate (agility) and thrust (speed).
+   `takeDamage()` applies soft (cannon) and hard (rocket) armor.
 - `js/rifleman.js` — the rifleman (low-poly infantry with an assault rifle):
   a walking pace (no reverse), free in-place turning, the same terrain
   following and slope limit as the tank, and a leg-swing walk animation.
@@ -247,8 +267,11 @@ vehicles) and when the plane's STALL warning appears.
   unique team, so friendly fire between CPUs is on (your tracers never hit
   you). `Shells` is the pooled main-gun system: each shell inherits the
   shooter's velocity plus its own speed, arcs under gravity, and detonates on
-  proximity/ground/fuse, applying splash damage with distance falloff to every
-  unit in the blast radius except the shooter (owner immunity). The same file
+   proximity/ground/fuse, applying splash damage with distance falloff to every
+   unit in the blast radius except the shooter (owner immunity). Each shell
+   carries its own splash-damage values (set at launch), so the player's
+   loadout can scale its shells while CPU shells use the base values. The same
+   file
   holds the ballistic launch-direction solver the AI uses to arc shells onto a
   target.
 - `js/aircombat.js` — pooled aerial weapons shared by the CPU planes and the

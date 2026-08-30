@@ -38,8 +38,8 @@
             <div>MOUSE pitch / bank &nbsp;&middot;&nbsp; W / &uarr; pitch up &nbsp;&middot;&nbsp; S / &darr; pitch down</div>
             <div>A / &larr; bank left &nbsp;&middot;&nbsp; D / &rarr; bank right &nbsp;&middot;&nbsp; Q / E rudder</div>
             <div>SHIFT / WHEEL throttle up &nbsp;&middot;&nbsp; CTRL / C / WHEEL throttle down</div>
-            <div>LEFT CLICK / SPACE fire &nbsp;&middot;&nbsp; RIGHT CLICK / X rockets</div>
-            <div>100 dmg = +1 rocket &nbsp;&middot;&nbsp; P pause &nbsp;&middot;&nbsp; R restart &nbsp;&middot;&nbsp; M mute &nbsp;&middot;&nbsp; H fps &nbsp;&middot;&nbsp; 1 / 2 camera</div>
+            <div id="plane-weapons-hint">LEFT CLICK / SPACE fire &nbsp;&middot;&nbsp; RIGHT CLICK / X rockets</div>
+            <div><span id="plane-rocket-hint">100 dmg = +1 rocket &nbsp;&middot;&nbsp; </span>P pause &nbsp;&middot;&nbsp; R restart &nbsp;&middot;&nbsp; M mute &nbsp;&middot;&nbsp; H fps &nbsp;&middot;&nbsp; 1 / 2 camera</div>
           </div>
           <div id="crosshair"></div>
           <div id="gun-heat"><div id="gun-heat-fill"></div></div>
@@ -80,6 +80,11 @@
                 <span id="vehicle-label">VEHICLE</span>
                 <button id="vehicle-toggle" type="button">TANK</button>
               </div>
+              <div id="loadout-control">
+                <span id="loadout-label">LOADOUT</span>
+                <button id="loadout-toggle" type="button">STANDARD</button>
+              </div>
+              <div id="loadout-desc">Balanced gun and tracks.</div>
               <div id="cpu-control">
                 <span id="cpu-label">TANKS</span>
                 <button id="cpu-minus" type="button">&minus;</button>
