@@ -481,6 +481,7 @@ const Game = (() => {
   let aaGuns = null; // M8: the fixed ring of AA turrets
   let aaSmokeTimer = 0; // throttles the continuous smoke from disabled AA guns
   let debris = null; // M5: pooled tank-shaped wreck pieces
+  let destruction = null; // special (20%) tank-destruction effects
   let flashes = null;
   const smokes = [];
   let mgCooldown = 0; // s until the next MG shot may fire
@@ -568,6 +569,9 @@ const Game = (() => {
     rockets = new Rockets(scene);
     debris = new Debris(scene);
     flashes = new MuzzleFlashes(scene);
+    destruction = new Destruction({
+      scene, terrain, camera: chaseCam, audio: EngineAudio, spawnSmoke, debris,
+    });
     // All four weapon pools share the same kill/damage attribution. The pools
     // are target-agnostic (any weapon can hit any unit or AA gun); which units
     // an AI *aims at* is decided by the AI, not by these callbacks.
@@ -746,6 +750,7 @@ const Game = (() => {
     aaGuns.reset();
     aaSmokeTimer = 0;
     debris.clear();
+    destruction.clear();
     flashes.clear();
     clearSmokes();
   }
@@ -886,9 +891,16 @@ const Game = (() => {
     cp.hp = 0;
     cp.group.visible = false;
     const dist = cp.position.distanceTo(player.position);
-    debris.spawn(cp.position, cp.velocity);
-    spawnSmoke(cp.position);
-    EngineAudio.crash(dist);
+    if (Math.random() < 0.2) {
+      // 20%: a special effect (turret blow-off + fireball + dust ring + ...).
+      // The effect spawns its own hull debris, smoke and deep boom.
+      destruction.special(cp, dist);
+    } else {
+      // 80%: the normal explosion (unchanged).
+      debris.spawn(cp.position, cp.velocity);
+      spawnSmoke(cp.position);
+      EngineAudio.crash(dist);
+    }
     slot.respawnTimer = CPU_RESPAWN_DELAY;
     slot.ai.reset();
     if (killer === player) {
@@ -2520,6 +2532,7 @@ const Game = (() => {
     hudCombat.classList.toggle("hidden", !(state === "playing" || state === "destroyed"));
     updateSmoke(dt);
     debris.update(dt, terrain);
+    destruction.update(dt);
     flashes.update(dt);
     updateHud();
     updateCrosshair();

@@ -525,6 +525,60 @@ const EngineAudio = (() => {
     osc.stop(t0 + 0.65);
   }
 
+  /** A bigger, deeper, longer boom than crash(): the "special" tank
+   *  destruction. A long low noise burst, a very deep slow sub-thump, and a
+   *  delayed second thump (the "rumble" tail). `dist` = meters from the
+   *  listener (player). */
+  function deepBoom(dist) {
+    if (!started) return;
+    const t0 = ctx.currentTime;
+    const vol = clamp(2.2 / (1 + dist / 260), 0.12, 1);
+
+    // --- big boom: long noise burst through a deep, slowly-falling lowpass ---
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuf;
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.setValueAtTime(2200, t0);
+    lp.frequency.exponentialRampToValueAtTime(45, t0 + 1.3);
+    const gn = ctx.createGain();
+    gn.gain.setValueAtTime(1.3 * vol, t0);
+    gn.gain.exponentialRampToValueAtTime(0.001, t0 + 1.4);
+    noise.connect(lp);
+    lp.connect(gn);
+    gn.connect(sfxGain);
+    noise.start(t0);
+    noise.stop(t0 + 1.45);
+
+    // --- sub thump: very deep sine with a slow pitch drop --------------------
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(70, t0);
+    osc.frequency.exponentialRampToValueAtTime(18, t0 + 0.9);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(1.1 * vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 1.0);
+    osc.connect(g);
+    g.connect(sfxGain);
+    osc.start(t0);
+    osc.stop(t0 + 1.05);
+
+    // --- delayed second thump: the "rumble" tail -----------------------------
+    const t1 = t0 + 0.28;
+    const osc2 = ctx.createOscillator();
+    osc2.type = "sine";
+    osc2.frequency.setValueAtTime(55, t1);
+    osc2.frequency.exponentialRampToValueAtTime(20, t1 + 0.6);
+    const g2 = ctx.createGain();
+    g2.gain.setValueAtTime(0.0001, t1);
+    g2.gain.exponentialRampToValueAtTime(0.7 * vol, t1 + 0.05);
+    g2.gain.exponentialRampToValueAtTime(0.001, t1 + 0.65);
+    osc2.connect(g2);
+    g2.connect(sfxGain);
+    osc2.start(t1);
+    osc2.stop(t1 + 0.7);
+  }
+
   /** One-shot human scream ("AARGH"): a pitch-dropping sawtooth voice through
    *  a formant bandpass, with vibrato and a breathy noise edge. `dist` =
    *  meters from the listener (player). */
@@ -692,6 +746,7 @@ const EngineAudio = (() => {
     isMuted,
     setSfxVolume,
     crash,
+    deepBoom,
     scream,
     mgFire,
     shellLaunch,
