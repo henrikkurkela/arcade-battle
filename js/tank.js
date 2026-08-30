@@ -174,6 +174,7 @@ class Tank {
     this._turretFwd = new THREE.Vector3();
     this._ahead = new THREE.Vector3();
     this._muzzleWorld = new THREE.Vector3();
+    this._barrelQuat = new THREE.Quaternion();
 
     // Track/wheel animation state (filled by _buildModel).
     this._links = [];
@@ -212,12 +213,16 @@ class Tank {
   }
 
   /** World-space barrel direction (write into `out` to avoid allocation).
-   *  Hull yaw + turret yaw, pitched by the turret elevation. */
+   *  The direction the barrel ACTUALLY points in world space, including the
+   *  hull's pitch/roll — so on a slope the barrel (and the shot) rides the
+   *  ground's tilt and can aim higher or lower than the flat-ground turret
+   *  pitch alone would allow. Composed from the real node quaternions, so it
+   *  always matches the visible barrel exactly. */
   barrelDir(out) {
-    const a = this.yaw + this.turretYaw;
-    const p = this.turretPitch;
-    const cp = Math.cos(p);
-    out.set(-cp * Math.sin(a), Math.sin(p), -cp * Math.cos(a));
+    this._barrelQuat.copy(this.group.quaternion)
+      .multiply(this.turret.quaternion)
+      .multiply(this.elev.quaternion);
+    out.set(0, 0, -1).applyQuaternion(this._barrelQuat);
     return out;
   }
 
