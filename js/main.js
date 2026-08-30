@@ -56,11 +56,11 @@ const Game = (() => {
   const KILL_SCORE = 500; // score per kill (scoreboard, M5)
 
   // --- Combat (M3) -----------------------------------------------------------
-  const MG_FIRE_INTERVAL = 0.08; // s between player MG shots
+  const MG_FIRE_INTERVAL = 0.15; // s between player MG shots (matches the AI)
   // SOFT damage (small arms). Boosted 10x over the pre-armor value (3); a
   // tank's TANK_SOFT_ARMOR (10) cancels it, so a tank still takes 3 per hit.
   const MG_DAMAGE_PLAYER = 30; // raw damage per player tracer
-  const GUN_HEAT_PER_SHOT = 1; // % heat per shot; 100 shots = overheat
+  const GUN_HEAT_PER_SHOT = 1.875; // % heat per shot; ~53 shots (≈8 s sustained) = overheat
   const GUN_COOL_RATE = 10; // %/s while not firing
   const GUN_MAX_TEMP = 100; // overheat: no fire until the gun cools back to 0
   const SHELL_RELOAD = 2.5; // s to reload the one shell in the breech

@@ -91,7 +91,9 @@ const RETARGET_INTERVAL = 0.3; // s between target re-picks
 const ENGAGE_RANGE = 1200; // m; nearest enemy within this is engaged
 const MG_FIRE_RANGE = 800; // m; max MG firing distance
 const MG_FIRE_CONE = 0.97; // barrel must be within ~14 deg of the aim point
-const MG_FIRE_INTERVAL_AI = 0.15; // s between AI MG shots
+  const MG_FIRE_INTERVAL_AI = 0.15; // s between AI MG shots
+  const MG_BURST_ROUNDS = 5; // rounds per MG burst
+  const MG_BURST_PAUSE = 0.5; // s pause between bursts (observe + re-aim)
 const PREFERRED_RANGE = 250; // m; approach if farther than this
 const BACKOFF_RANGE = 120; // m; closer than this -> back off (reverse)
 const LOOKAHEAD = 25; // m ahead of the hull to sample the terrain
@@ -118,6 +120,8 @@ class TankAI {
     this.retargetTimer = 0;
     this.fireCooldown = 0;
     this.shellCooldown = 0;
+    this.burstLeft = 0; // rounds left in the current MG burst
+    this.burstPause = 0; // s until the next MG burst may start
     // Ballistic launch direction for the next shell (read by main.js when
     // control.shellFiring is set). Arcs the unguided shell onto the aim point.
     this.shellDir = new THREE.Vector3();
@@ -132,6 +136,8 @@ class TankAI {
     this.retargetTimer = 0;
     this.fireCooldown = 0;
     this.shellCooldown = 0;
+    this.burstLeft = 0;
+    this.burstPause = 0;
     this.control.firing = false;
     this.control.shellFiring = false;
   }
@@ -250,15 +256,27 @@ class TankAI {
     c.turretDX = -yawStep / MOUSE_SENS;
     c.turretDY = -pitchStep / MOUSE_SENS;
 
-    // 6. Fire the MG: target in range, the barrel (not the hull) within the
-    // fire cone, cooldown elapsed.
-    if (t && t.alive && this.fireCooldown <= 0) {
+    // 6. Fire the MG in bursts (real-world discipline: shoot a burst, observe
+    // the tracers, re-aim, repeat). A burst is MG_BURST_ROUNDS rounds at the
+    // inter-round interval, then a MG_BURST_PAUSE pause before the next burst.
+    if (t && t.alive) {
       this._toTgt.copy(this._aim).sub(tank.position);
       if (this._toTgt.length() < MG_FIRE_RANGE) {
         tank.barrelDir(this._barrel);
         if (this._barrel.dot(this._toTgt.normalize()) > MG_FIRE_CONE) {
-          c.firing = true;
-          this.fireCooldown = MG_FIRE_INTERVAL_AI;
+          // In a burst: fire the next round once the inter-round cooldown is up.
+          if (this.burstLeft > 0 && this.fireCooldown <= 0) {
+            c.firing = true;
+            this.burstLeft--;
+            this.fireCooldown = MG_FIRE_INTERVAL_AI;
+            if (this.burstLeft === 0) this.burstPause = MG_BURST_PAUSE; // burst done
+          }
+          // Burst done (or not started): begin a new one once the pause is up.
+          else if (this.burstLeft <= 0 && this.burstPause <= 0) {
+            c.firing = true;
+            this.burstLeft = MG_BURST_ROUNDS - 1; // fire the first round now
+            this.fireCooldown = MG_FIRE_INTERVAL_AI;
+          }
         }
       }
     }
@@ -278,6 +296,7 @@ class TankAI {
     // 7. Timers.
     this.fireCooldown -= dt;
     this.shellCooldown -= dt;
+    this.burstPause -= dt;
     return this.control;
   }
 
