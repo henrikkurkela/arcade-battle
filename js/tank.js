@@ -159,6 +159,8 @@ class Tank {
     this.turretPitch = 0;
     this.hullPitch = 0;
     this.hullRoll = 0;
+    // Previous frame's hull pitch (for the player's barrel-stability correction).
+    this._prevHullPitch = 0;
 
     // Combat state.
     this.hp = this.maxHp = TANK_HP;
@@ -264,6 +266,7 @@ class Tank {
     this.turretPitch = 0;
     this.hullPitch = 0;
     this.hullRoll = 0;
+    this._prevHullPitch = 0;
     this.hp = this.maxHp;
     this.alive = true;
     this.group.visible = true;
@@ -347,13 +350,25 @@ class Tank {
 
     // Turret: mouse-driven (player) or AI-slewed. Both yaw and pitch are
     // rate-limited; pitch is also clamped to its min/max.
+    //
+    // Player only: when the hull pitches on the terrain (nose up/down), counter-
+    // rotate the turret by that pitch delta so the barrel keeps its world-space
+    // direction. The correction is folded into the mouse step and clamped to the
+    // same slew cap, so it eases in at no more than the user-adjustable max
+    // speed and stops at the pitch limit below. (The hull's roll is a rotation
+    // about the barrel's own axis and leaves its direction unchanged, so it needs
+    // no correction; the CPU tanks aim in world space already — see ai.js — so
+    // they are left untouched.)
+    const dPitch = this.team === "player"
+      ? this.hullPitch - this._prevHullPitch
+      : 0;
     this.turretYaw += clamp(
       -control.turretDX * MOUSE_SENS,
       -PLAYER_TURRET_YAW_RATE * this.turretRateMul * dt,
       PLAYER_TURRET_YAW_RATE * this.turretRateMul * dt
     );
     this.turretPitch += clamp(
-      -control.turretDY * MOUSE_SENS,
+      -control.turretDY * MOUSE_SENS - dPitch,
       -TURRET_PITCH_SLEW_RATE * this.turretRateMul * dt,
       TURRET_PITCH_SLEW_RATE * this.turretRateMul * dt
     );
@@ -361,6 +376,8 @@ class Tank {
     // Traverse cone (assault gun): the turret can't swing past the hull's
     // forward by more than turretCone — you aim by steering the hull.
     this.turretYaw = clamp(this.turretYaw, -this.turretCone, this.turretCone);
+
+    this._prevHullPitch = this.hullPitch;
 
     this._updateTracks(dt, this.trackSpeed);
     this._syncGroup();
