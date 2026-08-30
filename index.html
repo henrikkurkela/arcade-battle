@@ -31,7 +31,7 @@
             <div>W / &uarr; throttle &nbsp;&middot;&nbsp; S / &darr; reverse</div>
             <div>A / &larr; steer left &nbsp;&middot;&nbsp; D / &rarr; steer right</div>
             <div>SHIFT brake &nbsp;&middot;&nbsp; MOUSE aim turret</div>
-            <div>LEFT CLICK / SPACE fire MG &nbsp;&middot;&nbsp; RIGHT CLICK / X shell</div>
+            <div id="tank-fire-hint">LEFT CLICK / SPACE fire MG &nbsp;&middot;&nbsp; RIGHT CLICK / X shell</div>
             <div>P pause &nbsp;&middot;&nbsp; R restart &nbsp;&middot;&nbsp; M mute &nbsp;&middot;&nbsp; H fps &nbsp;&middot;&nbsp; 1 / 2 camera</div>
           </div>
           <div class="hud-box right hidden" id="plane-hints">
@@ -47,6 +47,7 @@
           <div id="overheat">OVERHEAT &mdash; WAIT FOR COOLING</div>
           <div id="garage-hint">GARAGE &mdash; REPAIRING</div>
           <div id="landing-hint" class="hidden">LANDED &mdash; HP RESTORED</div>
+          <div id="zeroed-hint" class="hidden">ZEROED</div>
         </div>
         <div id="msg-feed"></div>
         <div id="muted" class="hidden">MUTED</div>
@@ -151,6 +152,7 @@
     <script src="js/destruction.js"></script>
     <script src="js/aagun.js"></script>
     <script src="js/ai.js"></script>
+    <script src="js/ballistic.js"></script>
     <script src="js/main.js"></script>
   </body>
 </html>

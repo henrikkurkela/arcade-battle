@@ -78,11 +78,12 @@ vehicles) and when the plane's STALL warning appears.
   selected vehicle (the choice is remembered per vehicle and persists across
   reloads). Only your own unit is affected — the CPU fleet keeps its standard
   stats.
-  - *Tank:* **Standard** (balanced), **Assault Gun** (slow, limited-traverse
-    turret but +30% MG and shell damage — with the turret's traverse capped to
-    a narrow cone in front of the hull, you aim by steering), and **Light Tank**
-    (faster MG and tracks but -30% shell damage).
-  - *Plane:* **Standard** (cannon + rockets), **Tank Buster** (no cannon,
+  - *Tank:* **Standard** (balanced), **Assault Gun** (no MG — a ballistic
+    computer draws your shell's arc and calls ZEROED on a target; a slow,
+    limited-traverse turret with +30% shell damage, so you aim by steering),
+    and **Light Tank** (faster MG, tracks, and turret but -30% shell damage).
+  - *Plane:* **Standard** (cannon + rockets), **Tank Buster** (no cannon — a
+    ballistic computer shows your rocket's arc and calls ZEROED on a target;
     unlimited rockets, but heavier and slower), and **Dogfighter** (no rockets,
     the cannon overheats 2x slower, but more agile and faster).
 - **Title screen:** the world idles behind the overlay (engine ticking over).
@@ -207,8 +208,9 @@ vehicles) and when the plane's STALL warning appears.
   active unit/effect counts, and a rough CPU/GPU/capped verdict)), overlays (incl.
    the scoreboard), the vehicle and loadout toggles (a per-vehicle table of
    stat sets — damage/fire-rate/speed/agility multipliers, the plane's
-   cannon/rocket toggles and heat rate, and the tank's turret rate, top speed
-   and traverse cone — applied to the player unit only), the AI tank fleet
+    cannon/rocket toggles and heat rate, and the tank's turret rate, top speed,
+    traverse cone, MG toggle and ballistic computer — applied to the player
+    unit only), the AI tank fleet
    (respawn, kill attribution, per-shooter score tallies), the rifleman squad,
    the CPU plane fleet, the AA-gun ring, the garage base zone (flat zone,
    painted concrete decal with hazard border, tank repair hint, plane landing),
@@ -272,8 +274,18 @@ vehicles) and when the plane's STALL warning appears.
    carries its own splash-damage values (set at launch), so the player's
    loadout can scale its shells while CPU shells use the base values. The same
    file
-  holds the ballistic launch-direction solver the AI uses to arc shells onto a
-  target.
+   holds the ballistic launch-direction solver the AI uses to arc shells onto a
+   target.
+- `js/ballistic.js` — the player's ballistic computer (the Assault Gun tank
+  loadout and the Tank Buster plane loadout): a fire-control overlay that draws
+  the arcing ordnance's trajectory (the arc the shell/rocket would follow if
+  fired right now) and a ground marker at the impact point, both updated every
+  frame. It's weapon-agnostic — configure() sets the ordnance's physics for the
+  active weapon (the tank's shell from combat.js or the plane's rocket from
+  aircombat.js) — and reuses the real terrain, so the line always matches the
+  shot; the arc shifts as the vehicle moves (the ordnance inherits its motion).
+  It also reports whether an enemy is "zeroed" (in the blast of the impact or
+  on the arc within the proximity-fuse stand-off), which the HUD calls out.
 - `js/aircombat.js` — pooled aerial weapons shared by the CPU planes and the
   AA guns. `Projectiles` is a fixed pool of cannon tracers (SOFT damage) that
   inherit the shooter's velocity. `Rockets` is the pooled arcing ordnance

@@ -225,18 +225,20 @@ const Game = (() => {
     tank: [
       { id: "standard", name: "STANDARD", desc: "Balanced gun and tracks.",
         turretRate: 1.0, mgDamage: 1.0, mgRate: 1.0, shellDamage: 1.0, topSpeed: 1.0 },
-      { id: "assault", name: "ASSAULT GUN", desc: "Slow, limited-traverse turret; +30% MG and shell damage.",
-        turretRate: 0.5, mgDamage: 1.3, mgRate: 1.0, shellDamage: 1.3, topSpeed: 1.0,
+      { id: "assault", name: "ASSAULT GUN", desc: "No MG; a ballistic computer shows your shell's arc and calls ZEROED on a target. +30% shell damage.",
+        turretRate: 0.5, mgEnabled: false, shellDamage: 1.3, topSpeed: 1.0,
+        ballisticComputer: true,
         turretCone: THREE.MathUtils.degToRad(ASSAULT_GUN_CONE_DEG) },
-      { id: "light", name: "LIGHT TANK", desc: "Fast MG and tracks; -30% shell damage.",
-        turretRate: 1.0, mgDamage: 1.0, mgRate: 1.3, shellDamage: 0.7, topSpeed: 1.3 },
+      { id: "light", name: "LIGHT TANK", desc: "Fast MG, tracks, and turret; -30% shell damage.",
+        turretRate: 1.3, mgDamage: 1.0, mgRate: 1.3, shellDamage: 0.7, topSpeed: 1.3 },
     ],
     plane: [
       { id: "standard", name: "STANDARD", desc: "Cannon and rockets.",
         cannon: true, rockets: true, unlimitedRockets: false, heatPerShot: 1.0,
         agility: 1.0, speed: 1.0 },
-      { id: "tankbuster", name: "TANK BUSTER", desc: "No cannon, unlimited rockets; heavier and slower.",
+      { id: "tankbuster", name: "TANK BUSTER", desc: "No cannon — a ballistic computer shows your rocket's arc and calls ZEROED on a target. Unlimited rockets; heavier and slower.",
         cannon: false, rockets: true, unlimitedRockets: true, heatPerShot: 1.0,
+        ballisticComputer: true,
         agility: 0.9, speed: 0.9 },
       { id: "dogfighter", name: "DOGFIGHTER", desc: "No rockets, cannon overheats 2x slower; more agile and faster.",
         cannon: true, rockets: false, unlimitedRockets: false, heatPerShot: 0.5,
@@ -319,6 +321,8 @@ const Game = (() => {
   const planeHints = document.getElementById("plane-hints");
   const stall = document.getElementById("stall");
   const landingHint = document.getElementById("landing-hint");
+  const zeroedHint = document.getElementById("zeroed-hint");
+  const tankFireHint = document.getElementById("tank-fire-hint");
   const fpsBox = document.getElementById("fps");
   const fpsMain = document.getElementById("fps-main");
   const fpsDetail = document.getElementById("fps-detail");
@@ -527,6 +531,8 @@ const Game = (() => {
   let cannonEnabled = true;
   let rocketsEnabled = true;
   let unlimitedRockets = false;
+  let mgEnabled = true; // tank MG enabled (the Assault Gun loadout removes it)
+  let ballisticComputer = false; // tank ballistic computer (the Assault Gun loadout)
   // Plane combat state (M9). The gun heat/overheat state is shared with the
   // tank's MG (only one vehicle is active at a time).
   let rocketAmmo = ROCKET_MAX_AMMO;
@@ -545,6 +551,7 @@ const Game = (() => {
   let debris = null; // M5: pooled tank-shaped wreck pieces
   let destruction = null; // special (20%) tank-destruction effects
   let flashes = null;
+  let ballistic = null; // the player tank's ballistic computer (Assault Gun loadout)
   const smokes = [];
   let mgCooldown = 0; // s until the next MG shot may fire
   let gunTemp = 0; // gun temperature, 0..GUN_MAX_TEMP
@@ -634,6 +641,7 @@ const Game = (() => {
     destruction = new Destruction({
       scene, terrain, camera: chaseCam, audio: EngineAudio, spawnSmoke, debris,
     });
+    ballistic = new BallisticComputer(scene);
     // All four weapon pools share the same kill/damage attribution. The pools
     // are target-agnostic (any weapon can hit any unit or AA gun); which units
     // an AI *aims at* is decided by the AI, not by these callbacks.
@@ -814,6 +822,7 @@ const Game = (() => {
     debris.clear();
     destruction.clear();
     flashes.clear();
+    ballistic.clear();
     clearSmokes();
   }
 
@@ -904,14 +913,30 @@ const Game = (() => {
     mgRateMul = lo.mgRate ?? 1;
     shellDamageMul = lo.shellDamage ?? 1;
     heatPerShotMul = lo.heatPerShot ?? 1;
-    cannonEnabled = lo.cannon ?? true;
-    rocketsEnabled = lo.rockets ?? true;
-    unlimitedRockets = lo.unlimitedRockets ?? false;
-    // HUD: the rocket row is only useful for a plane that actually has rockets.
-    hudRocketsRow.classList.toggle("hidden", !(vehicle === VEHICLE_PLANE && rocketsEnabled));
-    updateLoadoutUI();
-    updatePlaneHints();
-    saveSettings();
+  cannonEnabled = lo.cannon ?? true;
+  rocketsEnabled = lo.rockets ?? true;
+  unlimitedRockets = lo.unlimitedRockets ?? false;
+  mgEnabled = lo.mgEnabled ?? true;
+  ballisticComputer = lo.ballisticComputer ?? false;
+  // HUD: the rocket row is only useful for a plane that actually has rockets.
+  hudRocketsRow.classList.toggle("hidden", !(vehicle === VEHICLE_PLANE && rocketsEnabled));
+  // The tank's control hints reflect the loadout.
+  updateTankHints();
+  // The ballistic computer reflects the loadout + the active weapon's physics
+  // (the tank's shell or the plane's rocket).
+  if (ballisticComputer) {
+    if (vehicle === VEHICLE_TANK) {
+      ballistic.configure(SHELL_SPEED, SHELL_GRAVITY, SHELL_LIFE, BLAST_RADIUS, SHELL_FUSE_RADIUS);
+    } else {
+      ballistic.configure(ROCKET_SPEED, ROCKET_GRAVITY, ROCKET_LIFE, ROCKET_BLAST_RADIUS, ROCKET_FUSE_RADIUS);
+    }
+    ballistic.setEnabled(true);
+  } else {
+    ballistic.setEnabled(false);
+  }
+  updateLoadoutUI();
+  updatePlaneHints();
+  saveSettings();
   }
 
   /** Cycle the active vehicle's loadout to the next one (title screen). */
@@ -937,10 +962,23 @@ const Game = (() => {
     const lo = activeLoadout();
     const parts = [];
     if (lo.cannon) parts.push("LEFT CLICK / SPACE fire");
-    if (lo.rockets) parts.push(lo.unlimitedRockets ? "RIGHT CLICK / X rockets (unlimited)" : "RIGHT CLICK / X rockets");
+    if (lo.rockets) {
+      const rocketHint = lo.unlimitedRockets ? "RIGHT CLICK / X rockets (unlimited)" : "RIGHT CLICK / X rockets";
+      parts.push(lo.ballisticComputer ? rocketHint + " (ballistic computer)" : rocketHint);
+    }
     planeWeaponsHint.textContent = parts.join("  \u00B7  ");
     // The "earn a rocket" hint only applies to a finite-rocket loadout.
     planeRocketHint.classList.toggle("hidden", !(lo.rockets && !lo.unlimitedRockets));
+  }
+
+  /** Reflect the active tank loadout's removed weapons in the control hints. */
+  function updateTankHints() {
+    if (vehicle !== VEHICLE_TANK) return;
+    const lo = activeLoadout();
+    const parts = [];
+    if (lo.mgEnabled !== false) parts.push("LEFT CLICK / SPACE fire MG");
+    parts.push(lo.ballisticComputer ? "RIGHT CLICK / X shell (ballistic computer)" : "RIGHT CLICK / X shell");
+    tankFireHint.textContent = parts.join("  \u00B7  ");
   }
 
   // --- AI fleet (M4) ---------------------------------------------------------
@@ -2190,7 +2228,9 @@ const Game = (() => {
     // red while the gun is locked out.
     if (gunTemp >= 50) gunHeatShown = true;
     else if (gunTemp <= 0) gunHeatShown = false;
-    gunHeat.classList.toggle("hidden", !(state === "playing" && gunHeatShown));
+    // The heat bar is only useful for the active weapon (tank MG or plane cannon).
+    const gunEnabled = isPlane ? cannonEnabled : mgEnabled;
+    gunHeat.classList.toggle("hidden", !(state === "playing" && gunHeatShown && gunEnabled));
     const heatPct = (gunTemp / GUN_MAX_TEMP) * 100;
     gunHeatFill.style.width = heatPct + "%";
     gunHeatFill.style.background = gunOverheated ? "#f44336" : heatPct > 75 ? "#ff5722" : "#ffb300";
@@ -2382,7 +2422,7 @@ const Game = (() => {
         // MG: hold LMB/Space. Sustained fire heats the gun; at GUN_MAX_TEMP it
         // overheates and cannot fire until fully cool.
         mgCooldown -= dt;
-        if (control.firing && mgCooldown <= 0 && !gunOverheated) {
+        if (mgEnabled && control.firing && mgCooldown <= 0 && !gunOverheated) {
           mgCooldown = MG_FIRE_INTERVAL / mgRateMul;
           gunTemp = Math.min(GUN_MAX_TEMP, gunTemp + GUN_HEAT_PER_SHOT * heatPerShotMul);
           if (gunTemp >= GUN_MAX_TEMP) gunOverheated = true;
@@ -2407,6 +2447,11 @@ const Game = (() => {
             chaseCam.shake = Math.max(chaseCam.shake, CAM_SHAKE_FIRE);
           }
         }
+
+        // Ballistic computer (Assault Gun loadout): draw the shell's arc + the
+        // impact marker, and call out an enemy that sits in the blast / on the arc.
+        const zeroed = ballistic.update(tank, terrain, ctx.units);
+        zeroedHint.classList.toggle("hidden", !zeroed);
       } else {
         inGarage = false; // the garage hint is tank-only (M9)
         const pc = planeController.update(dt, plane, ctx);
@@ -2441,6 +2486,11 @@ const Game = (() => {
             EngineAudio.rocketLaunch(0);
           }
         }
+
+        // Ballistic computer (Tank Buster loadout): draw the rocket's arc + the
+        // impact marker, and call out an enemy that sits in the blast / on the arc.
+        const zeroed = ballistic.update(plane, terrain, ctx.units);
+        zeroedHint.classList.toggle("hidden", !zeroed);
 
         // Player plane vs CPU plane (body collision) and ground/scenery crash.
         if (plane.alive) checkPlaneRam();
