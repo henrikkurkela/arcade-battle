@@ -2563,10 +2563,9 @@ const Game = (() => {
     // Garage hint: visible while the player tank is inside the pad (M5).
     garageHint.classList.toggle("hidden", !(state === "playing" && inGarage));
     // Landing hint: visible briefly after a clean plane touchdown (M9).
-    if (landingHintTimer > 0) {
-      landingHintTimer -= dt;
-      landingHint.classList.toggle("hidden", landingHintTimer <= 0);
-    }
+    // Always reconcile with the timer (a run reset zeroes it without hiding).
+    landingHintTimer = Math.max(0, landingHintTimer - dt);
+    landingHint.classList.toggle("hidden", landingHintTimer <= 0);
 
     // Keep the sky dome centered on the camera; otherwise its far side gets
     // clipped by the far plane once the camera moves farther than
