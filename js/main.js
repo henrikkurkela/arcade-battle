@@ -20,7 +20,7 @@
 //
 // M4: a fleet of AI tanks (TankAI) hunts the player and each other — nearest-
 // enemy targeting, lead pursuit, slope-aware steering, a battle-area leash,
-// MG sprays and rare arced shells. The ENEMIES control (0-16) grows and
+// MG sprays and rare arced shells. The TANKS control (0-16) grows and
 // shrinks the fleet live. Kill attribution feeds the message feed and the
 // scoreboard (per-AI tallies keyed by the Tank object, which persists across
 // respawns).
@@ -905,7 +905,7 @@ const Game = (() => {
     slot.ai.reset();
   }
 
-  /** Grow/shrink the fleet to `n` tanks (0 = training mode, a peaceful map).
+   /** Grow/shrink the fleet to `n` tanks.
     *  Called from the menu (before a run) and on the title screen. */
   function setFleetCount(n) {
     n = clamp(Math.round(n), 0, CPU_LIVERIES.length);
@@ -1830,13 +1830,13 @@ const Game = (() => {
   }
 
   // --- Menu controls ---------------------------------------------------------
-  /** Grow/shrink the enemy count (0 = training mode, a peaceful map). The
+   /** Grow/shrink the enemy count. The
     *  fleet is adjusted live, so the title screen shows the tanks. */
   function setCpuCount(n) {
     n = clamp(Math.round(n), 0, CPU_MAX);
     cpuCount = setFleetCount(n);
     cpuCountEl.textContent = cpuCount;
-    cpuLabel.textContent = cpuCount === 0 ? "TRAINING" : "ENEMIES";
+    cpuLabel.textContent = "TANKS";
     cpuMinus.disabled = cpuCount <= 0;
     cpuPlus.disabled = cpuCount >= CPU_MAX;
     saveSettings();

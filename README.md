@@ -73,8 +73,8 @@ vehicles) and when the plane's STALL warning appears.
 - **Vehicles:** the title screen's VEHICLE toggle switches between the tank
   and the plane. Your best score is shared between the two.
 - **Title screen:** the world idles behind the overlay (engine ticking over).
-  Set the counts with the title-screen controls — ENEMIES (CPU tanks, 0–16,
-  four by default; 0 = "TRAINING" mode, a peaceful map), RIFLEMEN (0–16, four
+   Set the counts with the title-screen controls — TANKS (CPU tanks, 0–16,
+   four by default; 0 shows "TANKS 0"), RIFLEMEN (0–16, four
   by default), PLANES (CPU planes, 0–16, four by default; 0 = "NO PLANES"),
   and AA GUNS (0–16, sixteen by default; 0 = "NO AA") — then press Enter/Space
   or click the start button (the pointer locks for aiming; Esc pauses and
