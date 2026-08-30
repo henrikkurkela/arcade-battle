@@ -74,6 +74,8 @@ const Game = (() => {
   const MG_DAMAGE_AI = 20; // raw damage per AI tracer
   const CAM_SHAKE_DESTROYED = 1.6; // camera shake when the player is destroyed
   const OVERLAY_DELAY = 0.8; // s the destruction registers before the panel appears
+  // Chance a CPU plane kill triggers a special effect (the wing blow-off).
+  const PLANE_SPECIAL_CHANCE = 0.4;
   // Damage smoke: a tank at or below these HP ratios trails smoke (checked
   // each frame) — light at <=50%, heavy (burning) at <=20%.
   const SMOKE_LIGHT_RATIO = 0.5;
@@ -1070,9 +1072,16 @@ const Game = (() => {
     cp.hp = 0;
     cp.group.visible = false;
     const dist = cp.position.distanceTo(player.position);
-    debris.spawn(cp.position, cp.velocity);
-    spawnSmoke(cp.position);
-    EngineAudio.crash(dist);
+    if (Math.random() < PLANE_SPECIAL_CHANCE) {
+      // Special effect (wing blow-off + 2-phase FX). Spawns its own plane
+      // debris, smoke and deep boom.
+      destruction.specialPlane(cp, dist);
+    } else {
+      // The normal explosion (unchanged).
+      debris.spawn(cp.position, cp.velocity);
+      spawnSmoke(cp.position);
+      EngineAudio.crash(dist);
+    }
     slot.respawnTimer = PLANE_RESPAWN_DELAY;
     slot.ai.reset();
     if (killer === player) {

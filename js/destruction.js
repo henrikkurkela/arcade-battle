@@ -22,10 +22,18 @@ const TURRET_BACK = 8; // m/s launch, toward the hull's rear
 const TURRET_INHERIT = 0.5; // fraction of the tank's velocity inherited
 const TURRET_FLIP = 7; // rad/s end-over-end flip (around the hull's right axis)
 const TURRET_FLIP_JITTER = 2.5; // rad/s of random tumble added on top
-const TURRET_GRAVITY = 9.8;
-const TURRET_AIR_DRAG = 0.5; // per second
-const TURRET_REST_TIME = 5; // s the assembly sits before it starts to fade
-const TURRET_FADE_TIME = 1.5; // s to shrink away
+
+const WING_FLY_POOL = 4; // pooled flying wing assemblies
+const WING_OUT = 8; // m/s launch, out along the wing span
+const WING_UP = 12; // m/s launch, straight up
+const WING_INHERIT = 0.5; // fraction of the plane's velocity inherited
+const WING_TUMBLE = 6; // rad/s of random tumble (all axes)
+
+// Shared physics for the coherent flying assemblies (turret + wing).
+const FLY_GRAVITY = 9.8;
+const FLY_AIR_DRAG = 0.5; // per second
+const FLY_REST_TIME = 5; // s the assembly sits before it starts to fade
+const FLY_FADE_TIME = 1.5; // s to shrink away
 
 const FIREBALL_POOL = 4;
 const FIREBALL_LIFE = 0.5; // s
@@ -119,13 +127,37 @@ class Destruction {
       });
     }
 
+    // --- Flying wing assemblies (built once, pooled) -------------------------
+    this.wings = [];
+    this._nextWing = 0;
+    for (let i = 0; i < WING_FLY_POOL; i++) {
+      const group = this._buildWingAssembly(0x8a8f94, 0xb3372f);
+      group.visible = false;
+      this.scene.add(group);
+      this.wings.push({
+        group,
+        active: false,
+        pos: new THREE.Vector3(),
+        vel: new THREE.Vector3(),
+        angVel: new THREE.Vector3(),
+        quat: new THREE.Quaternion(),
+        scale: 1,
+        resting: false,
+        restTimer: 0,
+        impactFired: false,
+      });
+    }
+
     this._axis = new THREE.Vector3();
     this._q = new THREE.Quaternion();
     this._right = new THREE.Vector3();
     this._back = new THREE.Vector3();
+    this._wingOut = new THREE.Vector3();
+    this._wingUp = new THREE.Vector3();
 
-    // --- Effect registry: each is its own self-contained function -----------
-    this.SPECIALS = [this.turretBlowoff];
+    // --- Effect registries: each is its own self-contained function ----------
+    this.SPECIALS = [this.turretBlowoff]; // CPU tanks
+    this.SPECIALS_PLANE = [this.wingBlowoff]; // CPU planes
   }
 
   /** Build a coherent turret+gun assembly (the same shapes as the live tank's
@@ -161,6 +193,27 @@ class Destruction {
     const mantlet = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.4, 0.85), darkMat);
     mantlet.position.set(0.1, -0.02, -0.875);
     g.add(mantlet);
+
+    g.traverse((o) => {
+      if (o.isMesh) o.castShadow = true;
+    });
+    return g;
+  }
+
+  /** Build a coherent wing assembly (the same shapes as the live plane's wing)
+   *  for the blow-off, centered at the wing's midline (origin). */
+  _buildWingAssembly(livery, red) {
+    const g = new THREE.Group();
+    const cream = new THREE.MeshLambertMaterial({ color: livery });
+    const redMat = new THREE.MeshLambertMaterial({ color: red });
+
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(6.8, 0.12, 0.7), cream);
+    g.add(wing);
+    for (const side of [1, -1]) {
+      const tip = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.12, 1.05), redMat);
+      tip.position.set(side * 3.55, 0, 0.15);
+      g.add(tip);
+    }
 
     g.traverse((o) => {
       if (o.isMesh) o.castShadow = true;
@@ -297,6 +350,42 @@ class Destruction {
     e.group.scale.setScalar(1);
   }
 
+  /** Launch the coherent wing assembly off the airframe at `plane`, seeded from
+   *  the live wing's world transform (the wing sits at local (0, -0.42, 0)). */
+  launchWing(plane) {
+    const e = this._acquire(this.wings, "_nextWing", (x) => x.active);
+    if (!e) return;
+    // The wing's world center = the plane's position + its up-axis offset.
+    e.pos.set(0, -0.42, 0).applyQuaternion(plane.quaternion).add(plane.position);
+    e.quat.copy(plane.quaternion); // the wing is axis-aligned with the airframe
+
+    // Launch out along the wing span (a random side) + up, inheriting velocity.
+    this._wingOut.set(1, 0, 0).multiplyScalar(Math.random() < 0.5 ? 1 : -1).applyQuaternion(plane.quaternion);
+    this._wingUp.set(0, 1, 0).applyQuaternion(plane.quaternion);
+    e.vel
+      .set(0, 0, 0)
+      .addScaledVector(this._wingOut, WING_OUT)
+      .addScaledVector(this._wingUp, WING_UP)
+      .addScaledVector(plane.velocity, WING_INHERIT);
+
+    // A chaotic tumble across all axes (a tumbling wing).
+    e.angVel.set(
+      (Math.random() - 0.5) * 2 * WING_TUMBLE,
+      (Math.random() - 0.5) * 2 * WING_TUMBLE,
+      (Math.random() - 0.5) * 2 * WING_TUMBLE
+    );
+
+    e.active = true;
+    e.resting = false;
+    e.restTimer = 0;
+    e.impactFired = false;
+    e.scale = 1;
+    e.group.visible = true;
+    e.group.position.copy(e.pos);
+    e.group.quaternion.copy(e.quat);
+    e.group.scale.setScalar(1);
+  }
+
   // --- The effects (each is its own self-contained function) -----------------
 
   /** Turret blow-off: the hull reads as the normal debris; the turret+gun
@@ -314,13 +403,34 @@ class Destruction {
     this.deepBoom(dist);
   }
 
-  // --- Dispatch (the 20% path) -----------------------------------------------
+  /** Wing blow-off: the airframe reads as the plane debris; the wing launches
+   *  off and tumbles. Phase 1 (in the air) sells the hit with a fireball, fire
+   *  + smoke burst, light flash, heavy shake and deep boom; phase 2 fires a
+   *  dust ring at the ground impact (when the tumbling wing lands, in update). */
+  wingBlowoff(plane, dist) {
+    this.debris.spawnPlane(plane.position, plane.velocity);
+    this.launchWing(plane);
+    this.fireball(plane.position);
+    this.fireBurst(plane.position);
+    this.smokeBurst(plane.position);
+    this.lightFlash(plane.position);
+    this.heavyShake(dist);
+    this.deepBoom(dist);
+  }
 
-  /** Run one special effect (picked from SPECIALS). `dist` = meters from the
-   *  player, for the distance-scaled feedback. */
+  // --- Dispatch (the special path) --------------------------------------------
+
+  /** Run one tank special effect (picked from SPECIALS). `dist` = meters from
+   *  the player, for the distance-scaled feedback. */
   special(tank, dist) {
     const fx = this.SPECIALS[(Math.random() * this.SPECIALS.length) | 0];
     fx.call(this, tank, dist);
+  }
+
+  /** Run one plane special effect (picked from SPECIALS_PLANE). */
+  specialPlane(plane, dist) {
+    const fx = this.SPECIALS_PLANE[(Math.random() * this.SPECIALS_PLANE.length) | 0];
+    fx.call(this, plane, dist);
   }
 
   // --- Integration -----------------------------------------------------------
@@ -332,8 +442,8 @@ class Destruction {
       if (!e.active) continue;
       if (e.resting) {
         e.restTimer += dt;
-        if (e.restTimer > TURRET_REST_TIME) {
-          e.scale = Math.max(0, e.scale - dt / TURRET_FADE_TIME);
+        if (e.restTimer > FLY_REST_TIME) {
+          e.scale = Math.max(0, e.scale - dt / FLY_FADE_TIME);
           if (e.scale <= 0) {
             e.active = false;
             e.group.visible = false;
@@ -341,14 +451,55 @@ class Destruction {
           }
         }
       } else {
-        e.vel.y -= TURRET_GRAVITY * dt;
-        e.vel.multiplyScalar(Math.max(0, 1 - TURRET_AIR_DRAG * dt));
+        e.vel.y -= FLY_GRAVITY * dt;
+        e.vel.multiplyScalar(Math.max(0, 1 - FLY_AIR_DRAG * dt));
         e.pos.addScaledVector(e.vel, dt);
         if (e.pos.y <= this.terrain.heightAt(e.pos.x, e.pos.z)) {
           e.pos.y = this.terrain.heightAt(e.pos.x, e.pos.z);
           e.resting = true;
           e.vel.set(0, 0, 0);
           e.angVel.set(0, 0, 0);
+        }
+      }
+      // Tumble.
+      const w = e.angVel.length();
+      if (w > 1e-4) {
+        this._axis.copy(e.angVel).divideScalar(w);
+        this._q.setFromAxisAngle(this._axis, w * dt);
+        e.quat.premultiply(this._q);
+      }
+      e.group.position.copy(e.pos);
+      e.group.quaternion.copy(e.quat);
+      e.group.scale.setScalar(e.scale);
+    }
+
+    // Flying wing: same flight/settle as the turret, plus a phase-2 dust ring
+    // at the ground impact (the "crash" mark).
+    for (const e of this.wings) {
+      if (!e.active) continue;
+      if (e.resting) {
+        e.restTimer += dt;
+        if (e.restTimer > FLY_REST_TIME) {
+          e.scale = Math.max(0, e.scale - dt / FLY_FADE_TIME);
+          if (e.scale <= 0) {
+            e.active = false;
+            e.group.visible = false;
+            continue;
+          }
+        }
+      } else {
+        e.vel.y -= FLY_GRAVITY * dt;
+        e.vel.multiplyScalar(Math.max(0, 1 - FLY_AIR_DRAG * dt));
+        e.pos.addScaledVector(e.vel, dt);
+        if (e.pos.y <= this.terrain.heightAt(e.pos.x, e.pos.z)) {
+          e.pos.y = this.terrain.heightAt(e.pos.x, e.pos.z);
+          e.resting = true;
+          e.vel.set(0, 0, 0);
+          e.angVel.set(0, 0, 0);
+          if (!e.impactFired) {
+            e.impactFired = true;
+            this.dustRing(e.pos); // phase 2: crash dust at the impact point
+          }
         }
       }
       // Tumble.
@@ -420,6 +571,10 @@ class Destruction {
   /** Deactivate everything (used on restart). */
   clear() {
     for (const e of this.turrets) {
+      e.active = false;
+      e.group.visible = false;
+    }
+    for (const e of this.wings) {
       e.active = false;
       e.group.visible = false;
     }
