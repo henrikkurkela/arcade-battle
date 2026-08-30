@@ -89,7 +89,7 @@ vehicles) and when the plane's STALL warning appears.
   shows the shell status (READY or the reload countdown) and an MG heat bar;
   in the plane it shows altitude, throttle, the rocket count, and the STALL
   warning.
-- **Tank — MG heat:** sustained fire heats your gun; after about 100 rounds it
+- **Tank — MG heat:** sustained fire heats your gun; after about 50 rounds it
   overheates and cannot fire until fully cooled. The heat bar appears at half
   heat (50%) and stays visible until the gun is fully cool, and an OVERHEAT
   warning stays up (with a beep) while locked out. Muzzle flashes blink at the
@@ -225,7 +225,7 @@ vehicles) and when the plane's STALL warning appears.
   steers a CPU tank: nearest-enemy target selection (you, other CPUs, riflemen,
   and planes), lead pursuit, hull steering with a slope-avoidance override, a
   preferred engagement range, a battle-area leash (they never stray far beyond
-  ~1.2 km of the map center), turret slewing, and firing decisions (MG spray
+  ~1.2 km of the map center), turret slewing, and firing decisions (burst MG fire
   plus a rare arced shell on a long cooldown). `RiflemanAI` drives a rifleman
   (advance to firing range, burst fire, back off when pressed). `PlaneAI`
   steers a CPU plane (nearest-enemy pursuit, collision avoidance, terrain and
@@ -282,7 +282,8 @@ vehicles) and when the plane's STALL warning appears.
   and the engine ticks over on the title screen), distance-scaled MG/cannon
   reports, shell/rocket launch and explosion sounds, and a warning beep for
   the OVERHEAT and STALL warnings. Everything feeds a user-adjustable SFX gain
-  under the shared master gain (M mutes it all); no audio assets, created on
+  under the shared master gain (M mutes it all), with a limiter on the master
+   bus that tames the summed peaks in big battles; no audio assets, created on
   the first user gesture. It exposes the shared AudioContext and master gain
   so the music module can plug into the same mix.
 - `js/music.js` — synthesized background music: three short synthwave loops

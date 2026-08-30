@@ -237,9 +237,11 @@ const Game = (() => {
   const musicCountEl = document.getElementById("music-count");
   const musicMinus = document.getElementById("music-minus");
   const musicPlus = document.getElementById("music-plus");
+  const musicLabel = document.getElementById("music-label");
   const sfxCountEl = document.getElementById("sfx-count");
   const sfxMinus = document.getElementById("sfx-minus");
   const sfxPlus = document.getElementById("sfx-plus");
+  const sfxLabel = document.getElementById("sfx-label");
   const timeToggle = document.getElementById("time-toggle");
   const hudCombat = document.getElementById("hud-combat");
   const hpFill = document.getElementById("hpfill");
@@ -996,7 +998,7 @@ const Game = (() => {
     while (rifleFleet.length < n) spawnRifleman();
     riflemanCount = rifleFleet.length;
     rifleCountEl.textContent = riflemanCount;
-    rifleLabel.textContent = "RIFLEMEN";
+    rifleLabel.textContent = riflemanCount === 0 ? "NO RIFLEMEN" : "RIFLEMEN";
     rifleMinus.disabled = riflemanCount <= 0;
     riflePlus.disabled = riflemanCount >= RIFLEMAN_MAX;
     saveSettings();
@@ -1836,7 +1838,7 @@ const Game = (() => {
     n = clamp(Math.round(n), 0, CPU_MAX);
     cpuCount = setFleetCount(n);
     cpuCountEl.textContent = cpuCount;
-    cpuLabel.textContent = "TANKS";
+    cpuLabel.textContent = cpuCount === 0 ? "NO TANKS" : "TANKS";
     cpuMinus.disabled = cpuCount <= 0;
     cpuPlus.disabled = cpuCount >= CPU_MAX;
     saveSettings();
@@ -1848,6 +1850,7 @@ const Game = (() => {
     musicVol = pct;
     Music.setMusicVolume(pct / 100);
     musicCountEl.textContent = pct;
+    musicLabel.textContent = pct === 0 ? "NO MUSIC" : "MUSIC";
     musicMinus.disabled = pct <= 0;
     musicPlus.disabled = pct >= 100;
     saveSettings();
@@ -1859,6 +1862,7 @@ const Game = (() => {
     sfxVol = pct;
     EngineAudio.setSfxVolume(pct / 100);
     sfxCountEl.textContent = pct;
+    sfxLabel.textContent = pct === 0 ? "NO SFX" : "SFX";
     sfxMinus.disabled = pct <= 0;
     sfxPlus.disabled = pct >= 100;
     saveSettings();
