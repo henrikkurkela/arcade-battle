@@ -19,7 +19,7 @@
 const MG_BULLET_SPEED = 160; // m/s
 const MG_BULLET_LIFE = 3; // s (~480 m range)
 const MG_HIT_RADIUS = 3.5; // m, 3D distance to a unit's center point
-const TRACER_POOL_SIZE = 512; // pooled tracers (player + CPU volleys in flight)
+const TRACER_POOL_SIZE = 1024; // pooled tracers (player + CPU volleys in flight)
 
 class Tracers {
   constructor(scene, poolSize = TRACER_POOL_SIZE) {
@@ -145,7 +145,7 @@ const BLAST_RADIUS = 12; // m; splash damage radius
 // the blast center and 15 at the edge.
 const SHELL_DAMAGE = 75; // HP at the blast center
 const SHELL_DAMAGE_MIN = 18.75; // HP at the blast edge
-const SHELL_POOL_SIZE = 32; // pooled shells (player + CPU volleys in flight)
+const SHELL_POOL_SIZE = 64; // pooled shells (player + CPU volleys in flight)
 
 /**
  * Compute the launch direction (unit vector, written into `out`) for a shell

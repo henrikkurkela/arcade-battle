@@ -19,7 +19,7 @@ const BULLET_LIFE = 4.5; // seconds (~630 m range)
 const HIT_RADIUS = 3.5; // meters
 
 class Projectiles {
-  constructor(scene, poolSize = 512) {
+  constructor(scene, poolSize = 1024) {
     this.pool = [];
     this._nextFree = 0;
     const geo = new THREE.BoxGeometry(0.12, 0.12, 2.4);
@@ -142,7 +142,7 @@ const ROCKET_FUSE_RADIUS = 6; // m; proximity stand-off that triggers detonation
 const ROCKET_BLAST_RADIUS = 15; // m; splash damage radius
 const ROCKET_DAMAGE = 35; // HP at the blast center
 const ROCKET_DAMAGE_MIN = 12; // HP at the blast edge
-const ROCKET_POOL_SIZE = 32; // pooled rockets (plane + AA volleys in flight)
+const ROCKET_POOL_SIZE = 64; // pooled rockets (plane + AA volleys in flight)
 
 /**
  * Compute the launch direction (unit vector, written into `out`) for an
