@@ -268,6 +268,10 @@ const Game = (() => {
   const planeHints = document.getElementById("plane-hints");
   const stall = document.getElementById("stall");
   const landingHint = document.getElementById("landing-hint");
+  const fpsBox = document.getElementById("fps");
+  const fpsMain = document.getElementById("fps-main");
+  const fpsDetail = document.getElementById("fps-detail");
+  const fpsLoad = document.getElementById("fps-load");
 
   // --- Message feed ----------------------------------------------------------
   const MSG_LIFE_MS = 5000; // matches the msg-fade animation
@@ -1663,6 +1667,7 @@ const Game = (() => {
           sfxVol,
           night: nightMode,
           bestScore,
+          fpsVisible,
         })
       );
     } catch (err) {
@@ -1704,6 +1709,9 @@ const Game = (() => {
   vehicle = savedSettings.vehicle === VEHICLE_PLANE ? VEHICLE_PLANE : VEHICLE_TANK;
   EngineAudio.setMuted(!!savedSettings.muted);
   mutedBadge.classList.toggle("hidden", !EngineAudio.isMuted());
+  // Performance meter (H): hidden by default; the choice persists.
+  let fpsVisible = savedSettings.fpsVisible === true;
+  fpsBox.classList.toggle("hidden", !fpsVisible);
   // Apply the persisted volumes and sync the overlay controls. (The enemy
   // count is applied in buildWorld(), once the player tank exists.)
   setMusicVolume(musicVol);
@@ -1884,6 +1892,12 @@ const Game = (() => {
       saveSettings();
       return;
     }
+    if (code === "KeyH") {
+      fpsVisible = !fpsVisible;
+      fpsBox.classList.toggle("hidden", !fpsVisible);
+      saveSettings();
+      return;
+    }
     if (code === "Enter" || code === "Space") {
       if (state === "ready") start();
       else if (state === "destroyed") restart();
@@ -2043,6 +2057,111 @@ const Game = (() => {
     crosshair.style.transform = "translate3d(" + x + "px," + y + "px,0)";
   }
 
+  // --- FPS meter ---------------------------------------------------------------
+  // Measures the frame interval, the JS work before renderer.render (CPU),
+  // and the render call itself (GPU dispatch), then estimates what is
+  // limiting the frame rate: the display's refresh cap, the CPU, or the GPU.
+  const fpsMeter = {
+    frameMs: 0, // smoothed frame interval (ms)
+    logicMs: 0, // smoothed JS work before renderer.render (ms)
+    renderMs: 0, // smoothed renderer.render time (ms)
+    calls: 0,
+    tris: 0,
+    refresh: 16.7, // estimated display refresh period (ms)
+    intervals: [], // rolling frame intervals for the refresh estimate
+    lastNow: 0,
+    lastUpdate: 0,
+  };
+
+  /** Count live entries in a pooled list (muzzle flashes use life > 0). */
+  function countActive(list, byLife) {
+    let n = 0;
+    for (const e of list) if (byLife ? e.life > 0 : e.active) n++;
+    return n;
+  }
+
+  /** Record this frame's timings (t0 = frame start, t1 = pre-render,
+   *  t2 = post-render) and refresh the display ~4x/s. */
+  function measureFps(t0, t1, t2) {
+    if (fpsMeter.lastNow > 0) {
+      const interval = t0 - fpsMeter.lastNow;
+      if (interval > 0 && interval < 100) {
+        fpsMeter.frameMs = fpsMeter.frameMs
+          ? fpsMeter.frameMs * 0.9 + interval * 0.1
+          : interval;
+        fpsMeter.intervals.push(interval);
+        if (fpsMeter.intervals.length > 90) fpsMeter.intervals.shift();
+        if (fpsMeter.intervals.length >= 30) {
+          const sorted = fpsMeter.intervals.slice().sort((a, b) => a - b);
+          fpsMeter.refresh = sorted[sorted.length >> 1];
+        }
+      }
+    }
+    fpsMeter.lastNow = t0;
+    fpsMeter.logicMs = fpsMeter.logicMs
+      ? fpsMeter.logicMs * 0.9 + (t1 - t0) * 0.1
+      : t1 - t0;
+    fpsMeter.renderMs = fpsMeter.renderMs
+      ? fpsMeter.renderMs * 0.9 + (t2 - t1) * 0.1
+      : t2 - t1;
+    fpsMeter.calls = renderer.info.render.calls;
+    fpsMeter.tris = renderer.info.render.triangles;
+    if (!fpsVisible) return; // keep measuring; skip the DOM while hidden
+    if (t2 - fpsMeter.lastUpdate < 250) return;
+    fpsMeter.lastUpdate = t2;
+
+    // What is limiting the frame rate?
+    let verdict, cls;
+    if (fpsMeter.frameMs <= fpsMeter.refresh * 1.2) {
+      verdict = "CAPPED"; // hitting the display's refresh rate; nothing to fix
+      cls = "ok";
+    } else if (fpsMeter.logicMs >= fpsMeter.renderMs) {
+      verdict = "CPU";
+      cls = "warn";
+    } else {
+      verdict = "GPU";
+      cls = "bad";
+    }
+    const fps = fpsMeter.frameMs > 0 ? Math.round(1000 / fpsMeter.frameMs) : 0;
+    fpsMain.innerHTML =
+      fps +
+      " FPS &nbsp; " +
+      fpsMeter.frameMs.toFixed(1) +
+      " ms &nbsp; <span class=\"" + cls + "\">" + verdict + "</span>";
+    fpsDetail.textContent =
+      "cpu " +
+      fpsMeter.logicMs.toFixed(1) +
+      " ms · gpu " +
+      fpsMeter.renderMs.toFixed(1) +
+      " ms";
+    // Scene load: active units and pooled effects in flight.
+    let units = 0;
+    if (player && player.alive) units++;
+    for (const s of fleet) if (s.tank.alive) units++;
+    for (const s of rifleFleet) if (s.unit.alive) units++;
+    for (const s of planeFleet) if (s.plane.alive) units++;
+    if (aaGuns) units += aaGuns.guns.length;
+    let fx = 0;
+    if (tracers) fx += countActive(tracers.pool);
+    if (shells) fx += countActive(shells.pool);
+    if (projectiles) fx += countActive(projectiles.pool);
+    if (rockets) fx += countActive(rockets.pool);
+    if (debris)
+      fx +=
+        countActive(debris.pool) +
+        countActive(debris.foliage) +
+        countActive(debris.body) +
+        countActive(debris.plane);
+    if (flashes) fx += countActive(flashes.pool, true);
+    fx += smokes.length;
+    const tris =
+      fpsMeter.tris >= 1000
+        ? (fpsMeter.tris / 1000).toFixed(0) + "k"
+        : String(fpsMeter.tris);
+    fpsLoad.textContent =
+      fpsMeter.calls + " calls · " + tris + " tris · " + units + " units · " + fx + " fx";
+  }
+
   // --- Main loop ---------------------------------------------------------------
   let last = performance.now();
 
@@ -2050,6 +2169,7 @@ const Game = (() => {
     requestAnimationFrame(frame);
     const dt = Math.min((now - last) / 1000, 0.05);
     last = now;
+    const t0 = now;
 
     if (state === "playing") {
       // All alive tanks (active player tank + fleet): the weapon pools and the
@@ -2415,7 +2535,10 @@ const Game = (() => {
     // clipped by the far plane once the camera moves farther than
     // (far - radius) from the origin, showing the black clear color.
     sky.position.copy(camera.position);
+    const t1 = performance.now();
     renderer.render(scene, camera);
+    const t2 = performance.now();
+    measureFps(t0, t1, t2);
   }
 
   // --- Resize ------------------------------------------------------------------

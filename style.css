@@ -287,6 +287,42 @@ canvas {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
 }
 
+/* ----------------------------------------------------------- FPS meter */
+
+#fps {
+  position: absolute;
+  bottom: 14px;
+  right: 14px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.55;
+  text-align: right;
+  white-space: nowrap;
+  background: rgba(10, 16, 26, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+#fps .ok {
+  color: #6dff8a;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+#fps .warn {
+  color: #ffd24a;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+#fps .bad {
+  color: #ff5252;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
 /* ---------------------------------------------------- compass tape */
 
 #compass {

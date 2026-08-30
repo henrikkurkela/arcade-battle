@@ -37,8 +37,8 @@ npx serve .
 ## Controls
 
 The title screen has a VEHICLE toggle (TANK / PLANE); the start button reads
-"Drive" or "Fly" to match. M, P, R and Enter/Space work in both vehicles
-(mute, pause, restart, start/restart).
+"Drive" or "Fly" to match. M, P, R, H and Enter/Space work in both vehicles
+(mute, pause, restart, performance meter, start/restart).
 
 ### Tank
 
@@ -86,9 +86,16 @@ vehicles) and when the plane's STALL warning appears.
 - **The HUD** shows a compass tape, an HP bar, speed (km/h), heading (degrees
   and compass point), kills, score, a crosshair marking your line of fire, a
   message feed of combat events, and the control hints. In the tank it also
-  shows the shell status (READY or the reload countdown) and an MG heat bar;
-  in the plane it shows altitude, throttle, the rocket count, and the STALL
-  warning.
+   shows the shell status (READY or the reload countdown) and an MG heat bar;
+   in the plane it shows altitude, throttle, the rocket count, and the STALL
+   warning.
+- **Performance meter:** **H** toggles a small meter in the bottom-right
+   corner (hidden by default; the choice persists across reloads). It shows
+   the frame rate, the frame time, a rough verdict on what is limiting it
+   (CAPPED = the display's refresh rate, CPU = the game logic, GPU = the
+   rendering), the CPU/GPU time split, the draw calls and triangle count, and
+   the number of active units and pooled effects in flight (useful for
+   correlating big-battle lag with scene load).
 - **Tank — MG heat:** sustained fire heats your gun; after about 50 rounds it
   overheates and cannot fire until fully cooled. The heat bar appears at half
   heat (50%) and stays visible until the gun is fully cool, and an OVERHEAT
@@ -182,7 +189,9 @@ vehicles) and when the plane's STALL warning appears.
 - `js/main.js` — scene setup (sky dome, fog, lights, shadows), game state
   (ready / playing / paused / destroyed), main loop, HUD (incl. HP bar, speed,
   heading + compass point, kills, score, compass tape, shell/rocket status,
-  heat bar, crosshair, stall/overheat/repair/landing hints), overlays (incl.
+  heat bar, crosshair, stall/overheat/repair/landing hints, the H-toggled
+  performance meter (FPS, frame time, CPU/GPU split, draw calls/triangles,
+  active unit/effect counts, and a rough CPU/GPU/capped verdict)), overlays (incl.
   the scoreboard), the vehicle toggle, the AI tank fleet (respawn, kill
   attribution, per-shooter score tallies), the rifleman squad, the CPU plane
   fleet, the AA-gun ring, the garage base zone (flat zone, painted concrete
@@ -190,7 +199,7 @@ vehicles) and when the plane's STALL warning appears.
   tank-obstacle collisions, plane crash/ram checks, dust puffs, damage smoke,
   the day/night environment blend, and the persisted settings (localStorage:
   vehicle, enemy/rifleman/plane/AA counts, volumes, mute, day/night, best
-  score).
+  score, performance meter visibility).
 - `js/tank.js` — the tank (primitive-based model: hull, tracks with road
   wheels, yawing turret with a pitching barrel, muzzle marker, optional
   livery color) and the arcade ground-vehicle model: throttle/brake/coast,
