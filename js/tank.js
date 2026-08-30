@@ -54,6 +54,9 @@ const TURRET_PITCH_MIN = THREE.MathUtils.degToRad(-10);
 const TURRET_PITCH_MAX = THREE.MathUtils.degToRad(30);
 const MOUSE_SENS = 0.0022; // rad/px (player turret)
 const PLAYER_TURRET_YAW_RATE = 1.5; // rad/s max player turret slew
+// Max turret elevation (pitch) slew, applied to both the player and the AI
+// (the AI passes pre-capped deltas at the same rate, so this is the final cap).
+const TURRET_PITCH_SLEW_RATE = 2; // rad/s
 const HULL_EASE = 8; // pitch/roll easing rate (per second)
 const CORNER_X = 1.3; // m, hull corner offset (left/right)
 const CORNER_Z = 1.9; // m, hull corner offset (front/rear)
@@ -329,17 +332,19 @@ class Tank {
     this.hullPitch = easeToward(this.hullPitch, targetPitch, HULL_EASE, dt);
     this.hullRoll = easeToward(this.hullRoll, targetRoll, HULL_EASE, dt);
 
-    // Turret: mouse-driven (player). Yaw is rate-limited; pitch is clamped.
+    // Turret: mouse-driven (player) or AI-slewed. Both yaw and pitch are
+    // rate-limited; pitch is also clamped to its min/max.
     this.turretYaw += clamp(
       -control.turretDX * MOUSE_SENS,
       -PLAYER_TURRET_YAW_RATE * dt,
       PLAYER_TURRET_YAW_RATE * dt
     );
-    this.turretPitch = clamp(
-      this.turretPitch - control.turretDY * MOUSE_SENS,
-      TURRET_PITCH_MIN,
-      TURRET_PITCH_MAX
+    this.turretPitch += clamp(
+      -control.turretDY * MOUSE_SENS,
+      -TURRET_PITCH_SLEW_RATE * dt,
+      TURRET_PITCH_SLEW_RATE * dt
     );
+    this.turretPitch = clamp(this.turretPitch, TURRET_PITCH_MIN, TURRET_PITCH_MAX);
 
     this._updateTracks(dt, this.trackSpeed);
     this._syncGroup();

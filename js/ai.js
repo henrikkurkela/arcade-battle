@@ -92,7 +92,7 @@ const AI_SHELL_RANGE = 500; // m; max range for a shell to arc onto the target
 const AI_SHELL_CONE = 0.92; // barrel must be within ~23 deg of the aim point
 const K_STEER = 1.5; // hull yaw servo gain (max turn = TURN_RATE, enforced in tank.js)
 const TURRET_YAW_RATE = 1.5; // rad/s AI turret slew
-const TURRET_PITCH_RATE = 4; // rad/s AI turret elevation slew
+const TURRET_PITCH_RATE = 2; // rad/s AI turret elevation slew
 
 class TankAI {
   constructor() {
