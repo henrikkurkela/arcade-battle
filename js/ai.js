@@ -128,6 +128,9 @@ class TankAI {
     this._aim = new THREE.Vector3();
     this._toTgt = new THREE.Vector3();
     this._barrel = new THREE.Vector3();
+    this._aimWorld = new THREE.Vector3();
+    this._aimHull = new THREE.Vector3();
+    this._hullQInv = new THREE.Quaternion();
   }
 
   /** Clear engagement state (used on respawn / restart). */
@@ -233,18 +236,19 @@ class TankAI {
         shellArc = true;
       }
     }
-    let desiredTurretYaw, desiredTurretPitch;
-    if (shellArc) {
-      desiredTurretYaw = Math.atan2(-this.shellDir.x, -this.shellDir.z);
-      desiredTurretPitch = Math.asin(clamp(this.shellDir.y, -1, 1));
-    } else {
-      const hDist = Math.hypot(dx, dz);
-      desiredTurretYaw = Math.atan2(-dx, -dz);
-      desiredTurretPitch = Math.atan2(this._aim.y - tank.position.y, hDist);
-    }
-    const worldYaw = tank.yaw + tank.turretYaw;
+    // The turret is rigidly attached to the (possibly tilted) hull, so the
+    // local yaw/pitch that point the barrel at the aim are the aim direction
+    // expressed in hull space. On flat ground this reduces to the world
+    // yaw/pitch.
+    if (shellArc) this._aimWorld.copy(this.shellDir);
+    else this._aimWorld.copy(this._aim).sub(tank.position);
+    this._aimWorld.normalize();
+    this._hullQInv.copy(tank.group.quaternion).invert();
+    this._aimHull.copy(this._aimWorld).applyQuaternion(this._hullQInv);
+    const desiredTurretYaw = Math.atan2(-this._aimHull.x, -this._aimHull.z);
+    const desiredTurretPitch = Math.asin(clamp(this._aimHull.y, -1, 1));
     const yawStep = clamp(
-      wrapAngle(desiredTurretYaw - worldYaw),
+      wrapAngle(desiredTurretYaw - tank.turretYaw),
       -TURRET_YAW_RATE * dt,
       TURRET_YAW_RATE * dt
     );
