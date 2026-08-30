@@ -135,7 +135,7 @@ class Tracers {
 }
 
 // --- Main-gun shells ----------------------------------------------------------
-const SHELL_SPEED = 90; // m/s (slower than tracers so the arc reads)
+const SHELL_SPEED = 140; // m/s (slower than tracers so the arc reads)
 const SHELL_LIFE = 8; // s fuse
 const SHELL_GRAVITY = 9.8; // m/s^2 (arcs the shell)
 const SHELL_FUSE_RADIUS = 5; // m; proximity stand-off that triggers detonation
