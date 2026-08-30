@@ -156,6 +156,19 @@ vehicles) and when the plane's STALL warning appears.
   shown on the title screen. R (or Enter/Space) starts a new run on the same
   map.
 - **HP:** tanks, planes, and AA guns all have 100 HP; riflemen have 40.
+- **Damage & armor:** every hit is classified as **soft** (small arms — the
+  tank's MG, the plane's cannon, riflemen's burst fire) or **hard** (heavy
+  ordnance — the main-gun shell and rockets). Each target carries two armor
+  values, one per kind, that act as divisors: incoming damage is divided by
+  the matching armor and floored, so a higher value soaks more (an armor of 1
+  is no protection at all). Tanks are heavily armored against small arms
+  (soft armor 10 — a 30-damage MG tracer gets through to just 3 HP) but only
+  lightly against the main gun (hard armor 1.25 — a shell still lands ~60 at
+  the blast center, ~15 at the edge). Riflemen have no armor at all (1/1) and
+  die fast to anything. Planes are armored against cannon (soft armor 3 — a
+  tracer deals ~7) but not against rockets (hard armor 1). AA guns are the
+  toughest (soft 10, hard 2), so they soak most hits and, when their 100 HP
+  finally runs out, are only knocked out for a while before re-enabling.
 - **Trees:** ~2000 per map, placed deterministically from the map seed (same
   seed => same layout), about half pine, half broadleaf. They avoid the garage
   pad and near-vertical slopes. Driving into a trunk stops you and chips a
