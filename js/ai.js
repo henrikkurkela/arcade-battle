@@ -47,7 +47,7 @@ class PlayerController {
 // plus keyboard (W/S pitch, A/D bank, Q/E rudder, Shift/Ctrl/C throttle).
 // Mouse and keyboard inputs are summed and clamped, so the keyboard remains a
 // fallback if the pointer lock fails. Space/LMB fire the cannon, X/RMB rockets.
-const PLANE_MOUSE_SENS = 1 / 50; // mouse px for full control deflection
+const PLANE_MOUSE_SENS = 1 / 10; // mouse px for full control deflection
 
 class PlanePlayerController {
   constructor() {
