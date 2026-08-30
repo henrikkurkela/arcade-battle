@@ -66,57 +66,61 @@
             Gun down the enemy fleet, arc your shells, retreat to the<br />
             garage to repair.
           </p>
-          <div id="scoreboard" class="hidden">
-            <table>
-              <thead>
-                <tr><th>CALLSIGN</th><th class="kills">KILLS</th><th class="score">SCORE</th></tr>
-              </thead>
-              <tbody id="scoreboard-body"></tbody>
-            </table>
-          </div>
-          <div id="vehicle-control">
-            <span id="vehicle-label">VEHICLE</span>
-            <button id="vehicle-toggle" type="button">TANK</button>
-          </div>
-          <div id="cpu-control">
-            <span id="cpu-label">TANKS</span>
-            <button id="cpu-minus" type="button">&minus;</button>
-            <span id="cpu-count">4</span>
-            <button id="cpu-plus" type="button">+</button>
-          </div>
-          <div id="rifle-control">
-            <span id="rifle-label">RIFLEMEN</span>
-            <button id="rifle-minus" type="button">&minus;</button>
-            <span id="rifle-count">4</span>
-            <button id="rifle-plus" type="button">+</button>
-          </div>
-          <div id="plane-control">
-            <span id="plane-label">PLANES</span>
-            <button id="plane-minus" type="button">&minus;</button>
-            <span id="plane-count">4</span>
-            <button id="plane-plus" type="button">+</button>
-          </div>
-          <div id="aa-control">
-            <span id="aa-label">AA GUNS</span>
-            <button id="aa-minus" type="button">&minus;</button>
-            <span id="aa-count">16</span>
-            <button id="aa-plus" type="button">+</button>
-          </div>
-          <div id="music-control">
-            <span id="music-label">MUSIC</span>
-            <button id="music-minus" type="button">&minus;</button>
-            <span id="music-count">100</span>
-            <button id="music-plus" type="button">+</button>
-          </div>
-          <div id="sfx-control">
-            <span id="sfx-label">SFX</span>
-            <button id="sfx-minus" type="button">&minus;</button>
-            <span id="sfx-count">100</span>
-            <button id="sfx-plus" type="button">+</button>
-          </div>
-          <div id="time-control">
-            <span id="time-label">TIME</span>
-            <button id="time-toggle" type="button">DAY</button>
+          <div id="overlay-body">
+            <div id="scoreboard" class="hidden">
+              <table>
+                <thead>
+                  <tr><th>CALLSIGN</th><th class="kills">KILLS</th><th class="score">SCORE</th></tr>
+                </thead>
+                <tbody id="scoreboard-body"></tbody>
+              </table>
+            </div>
+            <div id="overlay-options">
+              <div id="vehicle-control">
+                <span id="vehicle-label">VEHICLE</span>
+                <button id="vehicle-toggle" type="button">TANK</button>
+              </div>
+              <div id="cpu-control">
+                <span id="cpu-label">TANKS</span>
+                <button id="cpu-minus" type="button">&minus;</button>
+                <span id="cpu-count">4</span>
+                <button id="cpu-plus" type="button">+</button>
+              </div>
+              <div id="rifle-control">
+                <span id="rifle-label">RIFLEMEN</span>
+                <button id="rifle-minus" type="button">&minus;</button>
+                <span id="rifle-count">4</span>
+                <button id="rifle-plus" type="button">+</button>
+              </div>
+              <div id="plane-control">
+                <span id="plane-label">PLANES</span>
+                <button id="plane-minus" type="button">&minus;</button>
+                <span id="plane-count">4</span>
+                <button id="plane-plus" type="button">+</button>
+              </div>
+              <div id="aa-control">
+                <span id="aa-label">AA GUNS</span>
+                <button id="aa-minus" type="button">&minus;</button>
+                <span id="aa-count">16</span>
+                <button id="aa-plus" type="button">+</button>
+              </div>
+              <div id="music-control">
+                <span id="music-label">MUSIC</span>
+                <button id="music-minus" type="button">&minus;</button>
+                <span id="music-count">100</span>
+                <button id="music-plus" type="button">+</button>
+              </div>
+              <div id="sfx-control">
+                <span id="sfx-label">SFX</span>
+                <button id="sfx-minus" type="button">&minus;</button>
+                <span id="sfx-count">100</span>
+                <button id="sfx-plus" type="button">+</button>
+              </div>
+              <div id="time-control">
+                <span id="time-label">TIME</span>
+                <button id="time-toggle" type="button">DAY</button>
+              </div>
+            </div>
           </div>
           <button id="overlay-btn">Drive</button>
         </div>

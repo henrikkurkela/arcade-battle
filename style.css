@@ -401,13 +401,14 @@ canvas {
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow-y: auto; /* safety net: scroll instead of clipping on short screens */
   background: rgba(6, 10, 18, 0.45);
   backdrop-filter: blur(3px);
 }
 
 #overlay-card {
   max-width: 560px;
-  margin: 0 16px;
+  margin: auto 16px; /* centered when it fits; top-aligned + scrollable when not */
   padding: 30px 44px;
   text-align: center;
   color: #eaf2fb;
@@ -630,4 +631,34 @@ canvas {
 
 #overlay-btn:active {
   transform: scale(0.97);
+}
+
+/* Short screens: trade horizontal space for vertical — the scoreboard and
+   the options sit side-by-side (scoreboard left, options right). */
+@media (max-height: 1150px) and (min-width: 720px) {
+  /* Short screens have plenty of width: give the two columns room. */
+  #overlay-card {
+    max-width: 680px;
+  }
+
+  #overlay-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 28px;
+    margin-bottom: 24px;
+  }
+
+  #scoreboard {
+    margin-bottom: 0;
+    max-height: 52vh;
+  }
+
+  #time-control {
+    margin-bottom: 0;
+  }
+
+  /* Title screen (scoreboard hidden): the options span the full width. */
+  #scoreboard.hidden ~ #overlay-options {
+    grid-column: 1 / -1;
+  }
 }
