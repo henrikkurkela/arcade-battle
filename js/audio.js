@@ -35,6 +35,7 @@ const EngineAudio = (() => {
 
   let ctx = null;
   let master = null;
+  let compressor = null;
   let sfxGain = null;
   let noiseBuf = null;
   let engineGain = null;
@@ -66,7 +67,18 @@ const EngineAudio = (() => {
     noiseBuf = makeNoiseBuffer();
     master = ctx.createGain();
     master.gain.value = muted ? 0 : MASTER_VOL;
-    master.connect(ctx.destination);
+
+    // Limiter: in a big battle the summed sources (engine + music + many
+    // one-shots) can exceed 1.0 and hard-clip at the destination. The
+    // compressor is transparent at normal levels and only tames the hot peaks.
+    compressor = ctx.createDynamicsCompressor();
+    compressor.threshold.value = -6;
+    compressor.knee.value = 6;
+    compressor.ratio.value = 16;
+    compressor.attack.value = 0.003;
+    compressor.release.value = 0.25;
+    master.connect(compressor);
+    compressor.connect(ctx.destination);
 
     sfxGain = ctx.createGain();
     sfxGain.gain.value = sfxVol;
