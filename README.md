@@ -37,10 +37,11 @@ npx serve .
 
 ## Controls
 
-The title screen has a VEHICLE toggle (TANK / PLANE) and a LOADOUT toggle
-(picks the loadout for the selected vehicle — see Gameplay); the start button
-reads "Drive" or "Fly" to match. M, P, R, H and Enter/Space work in both
-vehicles (mute, pause, restart, performance meter, start/restart).
+The title screen has a VEHICLE toggle (TANK / PLANE), a LOADOUT toggle (picks
+the loadout for the selected vehicle — see Gameplay), and a DIFFICULTY toggle
+(see Gameplay); the start button reads "Drive" or "Fly" to match. M, P, R, H, 1/2 and Enter/Space work in both
+vehicles (mute, pause, restart, performance meter, camera mode — 1 = chase,
+2 = hatch in the tank / canopy in the plane — and start/restart).
 
 ### Tank
 
@@ -63,6 +64,7 @@ vehicles (mute, pause, restart, performance meter, start/restart).
 | A / ← , D / → | Bank (keyboard fallback) |
 | Q / E | Rudder |
 | Shift / Ctrl or C | Throttle up / down |
+| Mouse wheel | Throttle (steps up/down) |
 | Left click / Space | Fire cannon (hold to spray) |
 | Right click / X | Fire rockets |
 
@@ -88,15 +90,17 @@ vehicles) and when the plane's STALL warning appears.
     the cannon overheats 2x slower, but more agile and faster).
 - **Title screen:** the world idles behind the overlay (engine ticking over).
    Set the counts with the title-screen controls — TANKS (CPU tanks, 0–16,
-   four by default; 0 shows "TANKS 0"), RIFLEMEN (0–16, four
-  by default), PLANES (CPU planes, 0–16, four by default; 0 = "NO PLANES"),
-  and AA GUNS (0–16, sixteen by default; 0 = "NO AA") — then press Enter/Space
-  or click the start button (the pointer locks for aiming; Esc pauses and
-  releases it). The title screen also has MUSIC and SFX volume controls
-  (0–100, in steps of 10) and a TIME toggle for day/night. All of these
-  settings — plus the mute flag and your best score — persist across page
-  reloads (localStorage); the best score is shown on the title screen once you
-  have one.
+   four by default; 0 = "NO TANKS"), RIFLEMEN (0–16, four by default;
+   0 = "NO RIFLEMEN"), PLANES (CPU planes, 0–16, four by default; 0 = "NO
+   PLANES"), and AA GUNS (0–16, sixteen by default; 0 = "NO AA") — and pick a
+   DIFFICULTY (EASY / NORMAL / HARD, normal by default; it scales the AI's aim
+   error, engagement/fire ranges, and shot damage). Then press Enter/Space or
+   click the start button (the pointer locks for aiming; Esc pauses and
+   releases it). The title screen also has MUSIC and SFX volume controls
+   (0–100, in steps of 10) and a TIME toggle for day/night. All of these
+   settings — plus the mute flag and your best score — persist across page
+   reloads (localStorage); the best score is shown on the title screen once you
+   have one.
 - **The HUD** shows a compass tape, an HP bar, speed (km/h), heading (degrees
   and compass point), kills, score, a crosshair marking your line of fire, a
   message feed of combat events, and the control hints. In the tank it also
@@ -134,9 +138,10 @@ vehicles) and when the plane's STALL warning appears.
   falling to 12 at the edge). Rockets are finite: you start with 6, and every
   100 HP of damage you deal (cannon or rocket) earns one more, up to the cap.
 - **Riflemen:** foot infantry (four by default) with 40 HP and no armor. They
-  walk toward the nearest tank, stop at firing range, and lay down burst fire;
-  pressed up close they turn and walk away. Tank MG fire, shell splashes, and
-  plane cannon/rockets all kill them fast.
+   walk toward the nearest tank, stop at firing range, and lay down burst fire;
+   pressed up close they turn and walk away. Tank MG fire, shell splashes, and
+   plane cannon/rockets all kill them fast — and a moving tank can simply run
+   them over.
 - **CPU planes:** a fleet of fighters (four by default) that dogfights each
   other and the ground forces, spraying cannon and launching rare rockets.
   Shoot one down for a kill; colliding with one (or hitting the ground or
@@ -146,12 +151,23 @@ vehicles) and when the plane's STALL warning appears.
   and rare rockets. They are heavily armored but can be **knocked out** (they
   stay disabled for a while, then re-enable); knocking one out is called out in
   the message feed but scores nothing. At night each gun sweeps a searchlight.
-- **Collisions (tank):** driving into a tree or rock stops the tank at the
-  trunk and chips 2 HP on a hard impact (not instant death). Ramming another
-  tank at speed damages **both** tanks (speed-based) and pushes the hulls
-  apart. Destroyed tanks break into a burst of tumbling debris (hull slab,
-  track section, turret chunk) that falls to the ground, rests for a few
-  seconds, and shrinks away.
+- **Collisions (tank):** driving into a tree or rock below 12 m/s stops the
+   tank at the obstacle and chips 2 HP on a hard impact (not instant death);
+   at 12 m/s or more the tank **fells** any trees in the way (a foliage burst
+   flies off, the tank plows through with a speed cut, and felled trees come
+   back on a restart) while rocks still stop it. AA guns are solid structures
+   too: driving into one stops the tank and chips 2 HP on a hard impact.
+   Ramming another tank at speed damages **both** tanks (speed-based) and
+   pushes the hulls apart, and a moving tank runs over any rifleman it
+   overlaps (speed-based damage). Destroyed tanks usually break into a burst
+   of tumbling debris (hull slab, track section, turret chunk) that falls to
+   the ground, rests for a few seconds, and shrinks away; 20% of CPU tank
+   kills instead trigger a special effect — the turret and gun launch off the
+   wreck in a tumble, with a fireball, a dust ring, a light flash and a deep
+   boom (see `js/destruction.js`). CPU plane kills get the same treatment 40%
+   of the time (the wing blows off and tumbles to the ground), and 50% of
+   rifleman kills fling the body away from the killer in a ragdoll tumble
+   with a blood splash and a scream.
 - **Damage smoke:** at 50% HP or below a unit trails light smoke; at 20% or
   below it burns heavily (dark, fast smoke). Moving tanks kick up dust puffs
   behind their tracks, scaled by speed, with an extra burst on hard turns.
@@ -187,13 +203,14 @@ vehicles) and when the plane's STALL warning appears.
   lightly against the main gun (hard armor 1.25 — a shell still lands ~60 at
   the blast center, ~15 at the edge). Riflemen have no armor at all (1/1) and
   die fast to anything. Planes are armored against cannon (soft armor 3 — a
-  tracer deals ~7) but not against rockets (hard armor 1). AA guns are the
+   tracer deals ~6 on normal difficulty) but not against rockets (hard armor 1). AA guns are the
   toughest (soft 10, hard 2), so they soak most hits and, when their 100 HP
   finally runs out, are only knocked out for a while before re-enabling.
 - **Trees:** ~2000 per map, placed deterministically from the map seed (same
-  seed => same layout), about half pine, half broadleaf. They avoid the garage
-  pad and near-vertical slopes. Driving into a trunk stops you and chips a
-  little HP.
+   seed => same layout), about half pine, half broadleaf. They avoid the garage
+   pad and near-vertical slopes. Driving into a trunk below 12 m/s stops you
+   and chips a little HP; at 12 m/s or more you fell the tree and plow
+   through (it comes back on a restart).
 - **Rocks:** ~200 boulders per map, placed the same way (seeded, garage
   clear). They tolerate steeper ground, so they also sit on cliffs. Driving
   into one stops you and chips a little HP.
@@ -205,30 +222,34 @@ vehicles) and when the plane's STALL warning appears.
   heading + compass point, kills, score, compass tape, shell/rocket status,
   heat bar, crosshair, stall/overheat/repair/landing hints, the H-toggled
   performance meter (FPS, frame time, CPU/GPU split, draw calls/triangles,
-  active unit/effect counts, and a rough CPU/GPU/capped verdict)), overlays (incl.
-   the scoreboard), the vehicle and loadout toggles (a per-vehicle table of
-   stat sets — damage/fire-rate/speed/agility multipliers, the plane's
-    cannon/rocket toggles and heat rate, and the tank's turret rate, top speed,
-    traverse cone, MG toggle and ballistic computer — applied to the player
-    unit only), the AI tank fleet
-   (respawn, kill attribution, per-shooter score tallies), the rifleman squad,
-   the CPU plane fleet, the AA-gun ring, the garage base zone (flat zone,
-   painted concrete decal with hazard border, tank repair hint, plane landing),
-   tank-tank and tank-obstacle collisions, plane crash/ram checks, dust puffs,
-   damage smoke, the day/night environment blend, and the persisted settings
-   (localStorage: vehicle, loadouts, enemy/rifleman/plane/AA counts, volumes,
-   mute, day/night, best score, performance meter visibility).
+   active unit/effect counts, and a rough CPU/GPU/capped verdict)), overlays (incl.
+    the scoreboard), the vehicle, loadout and difficulty toggles (a per-vehicle
+    table of stat sets — damage/fire-rate/speed/agility multipliers, the plane's
+     cannon/rocket toggles and heat rate, and the tank's turret rate, top speed,
+     traverse cone, MG toggle and ballistic computer — applied to the player
+     unit only; the difficulty swaps the AI tuning set in ai.js), the AI tank
+    fleet (respawn, kill attribution, per-shooter score tallies), the rifleman
+    squad, the CPU plane fleet, the AA-gun ring, the garage base zone (flat
+    zone, painted concrete decal with hazard border, tank repair hint, plane
+    landing), tank-tank, tank-obstacle (incl. tree felling), tank/AA-gun and
+    tank/rifleman collisions, plane crash/ram checks, the destruction-effect
+    dispatch (normal debris vs. the special effects in destruction.js), dust
+    puffs, damage smoke, the day/night environment blend, and the persisted
+    settings (localStorage: vehicle, loadouts, difficulty,
+    enemy/rifleman/plane/AA counts, volumes, mute, day/night, best score,
+    performance meter visibility).
 - `js/tank.js` — the tank (primitive-based model: hull, tracks with road
   wheels, yawing turret with a pitching barrel, muzzle marker, optional
   livery color) and the arcade ground-vehicle model: throttle/brake/coast,
-  speed-scaled steering that inverts in reverse, terrain following (hull y
-  from the four corners, eased pitch/roll), a slope limit that kills forward
-   motion on steep ground, and the mouse-driven turret (yaw, clamped pitch).
+   speed-scaled steering that inverts in reverse, terrain following (hull y
+   from the four corners, eased pitch/roll), a traction model that bleeds off
+   top speed as slopes approach the 35° spin-out limit (descents are boosted),
+   and the mouse-driven turret (yaw, clamped pitch).
    Loadout multipliers (player only, set by main.js) scale the turret slew
    rate and top speed, and an optional traverse cone caps the hull-relative
-   turret yaw to a cone in front of the hull (the assault gun). `update(dt,
-   control)` takes a continuous control vector from a
-  controller rather than reading the keyboard, and exposes `hp`/`alive`/
+    turret yaw to a cone in front of the hull (the assault gun). `update(dt,
+    control, terrain)` takes a continuous control vector from a
+   controller rather than reading the keyboard, and exposes `hp`/`alive`/
   `team`, `takeDamage()`, and world-space muzzle/barrel directions for the
   weapon systems.
 - `js/plane.js` — the plane (primitive-based low-wing single-seater: fuselage,
@@ -259,9 +280,12 @@ vehicles) and when the plane's STALL warning appears.
   ~1.2 km of the map center), turret slewing, and firing decisions (burst MG fire
   plus a rare arced shell on a long cooldown). `RiflemanAI` drives a rifleman
   (advance to firing range, burst fire, back off when pressed). `PlaneAI`
-  steers a CPU plane (nearest-enemy pursuit, collision avoidance, terrain and
-  altitude limits, cannon spray plus a rare arced rocket). All behavior is
-  driven by named tuning constants at the top of the file.
+   steers a CPU plane (nearest-enemy pursuit, collision avoidance, terrain and
+   altitude limits, cannon spray plus a rare arced rocket). All behavior is
+   driven by named tuning constants at the top of the file; the AI's aim
+   error, engagement/fire ranges, and shot damage come from a per-difficulty
+   tuning set (EASY / NORMAL / HARD, chosen on the title screen and swapped
+   in by main.js).
 - `js/combat.js` — pooled ground weapons shared by the player tank and the CPU
   tanks. `Tracers` is a fixed pool of MG tracer meshes (no per-shot
   allocation): tracers inherit the shooter's velocity, and hits apply damage
@@ -296,10 +320,21 @@ vehicles) and when the plane's STALL warning appears.
   decides what to aim at. The file also holds the ballistic rocket
   launch-direction solver.
 - `js/debris.js` — pooled debris: when a tank is destroyed, a burst of
-  tumbling tank-shaped pieces (hull slab, track section, turret chunk) flies
-  out inheriting the tank's velocity, falls under gravity with drag, lands on
-  the terrain, rests for a few seconds, then shrinks away. Fixed pool of
-  meshes, no per-kill allocation.
+   tumbling tank-shaped pieces (hull slab, track section, turret chunk) flies
+   out inheriting the tank's velocity, falls under gravity with drag, lands on
+   the terrain, rests for a few seconds, then shrinks away. The same
+   flight-and-rest behavior covers plane debris (destroyed airframes),
+   rifleman body pieces (killed infantry), and foliage chunks (felled trees).
+   Fixed pools of meshes, no per-kill allocation.
+- `js/destruction.js` — the special destruction effects, triggered by chance
+   on top of the normal debris: a CPU tank's turret and gun launch off the
+   wreck in a tumble (20% of tank kills), a CPU plane's wing blows off and
+   tumbles to the ground (40% of plane kills), and a killed rifleman's body
+   flings away from the killer in a ragdoll tumble (50% of rifleman kills).
+   Each effect composes from shared FX primitives (fireball, fire and smoke
+   bursts, dust ring, light flash, heavy camera shake, deep boom); the
+   coherent flying assemblies are built once and pooled, so there is no
+   per-kill allocation.
 - `js/muzzle.js` — pooled muzzle flashes: a bright additive sprite blinks at
   the muzzle for a few frames each time any gun fires. Fixed pool of
   sprites, same pattern as `Tracers`, `Shells`, and `Debris`.
@@ -316,15 +351,19 @@ vehicles) and when the plane's STALL warning appears.
   edge fade that matches the terrain's horizon blend. `collidesWith(pos, r)`
   (bool) and `overlapping(pos, r, out)` (fills `out`) drive the tank blocking
   and the plane crash checks.
-- `js/camera.js` — the chase camera (sits behind and above the hull, follows
-  with a small lead in the direction of travel, widens the FOV at speed,
-  shakes on hits and destruction) for the tank, and the plane camera (behind
-  and above the fuselage) for the plane.
+- `js/camera.js` — the tank camera, two modes toggled with 1/2: chase (sits
+   behind and above the turret axis, so swinging the turret orbits the camera;
+   follows with a small lead in the direction of travel, widens the FOV at
+   speed, shakes on hits and destruction) and hatch (at the driver's hatch,
+   looking straight down the barrel), and the plane camera with the same two
+   modes: chase (behind and above the fuselage, the horizon banks partially
+   with the plane) and canopy (just above the canopy, looking down the nose
+   with full bank).
 - `js/audio.js` — synthesized engine audio (diesel rumble for the tank from a
   low sawtooth/triangle pair and filtered noise; a propeller "thump" and
   "whoosh" for the plane; the pitch and volume scale with throttle and speed,
   and the engine ticks over on the title screen), distance-scaled MG/cannon
-  reports, shell/rocket launch and explosion sounds, and a warning beep for
+  reports, shell/rocket launch and explosion sounds, a tree thud, a deep long boom for the special destruction effects, a rifleman scream, and a warning beep for
   the OVERHEAT and STALL warnings. Everything feeds a user-adjustable SFX gain
   under the shared master gain (M mutes it all), with a limiter on the master
    bus that tames the summed peaks in big battles; no audio assets, created on
@@ -336,9 +375,9 @@ vehicles) and when the plane's STALL warning appears.
   the shared AudioContext (pad, bass, detuned-saw lead, and noise-based
   drums, with a feedback delay). It feeds a user-adjustable music gain (the
   title-screen MUSIC control) under the same master gain, so M mutes it too;
-  it ducks while paused and fades out on destruction.
+   it ducks while paused and fades out on destruction.
 - `js/utils.js`, `js/input.js` — helpers and keyboard/mouse state (incl. the
-  pointer-lock handling for aiming).
+   pointer-lock handling for aiming).
 - `lib/three.min.js` — Three.js r150 (local copy, no CDN needed).
 
 Rendering notes: the sun (and its shadow camera) follows the player unit, so
