@@ -224,10 +224,16 @@ class Rockets {
         owner: null,
         team: "",
         life: 0,
+        damage: ROCKET_DAMAGE,
+        damageMin: ROCKET_DAMAGE_MIN,
         motor,
         motorMat,
       });
     }
+    // Base splash damage, exposed so main.js can scale the AI's rockets
+    // (difficulty) and pass the scaled value into fire().
+    this.baseDamage = ROCKET_DAMAGE;
+    this.baseDamageMin = ROCKET_DAMAGE_MIN;
     // Set by main.js: (owner, victim, dealt) => void, called on every splash hit.
     this.onDamage = null;
     // Set by main.js: (owner, victim) => void, called on a lethal splash hit.
@@ -237,8 +243,9 @@ class Rockets {
   }
 
   /** Launch one rocket. Drops it if the pool is full. Returns true if launched.
-   *  `kind` is the damage kind ("hard" for rockets). */
-  fire(owner, muzzleWorld, dir, kind = "hard") {
+    *  `kind` is the damage kind ("hard" for rockets). `damage`/`damageMin`
+    *  override the base splash damage (difficulty); omit for the standard value. */
+  fire(owner, muzzleWorld, dir, kind = "hard", damage, damageMin) {
     for (let i = 0; i < this.pool.length; i++) {
       const e = this.pool[(this._nextFree + i) % this.pool.length];
       if (e.active) continue;
@@ -249,6 +256,8 @@ class Rockets {
       e.pos.copy(muzzleWorld);
       e.vel.copy(owner.velocity).addScaledVector(dir, ROCKET_SPEED);
       e.life = ROCKET_LIFE;
+      e.damage = damage ?? this.baseDamage;
+      e.damageMin = damageMin ?? this.baseDamageMin;
       e.group.visible = true;
       e.group.position.copy(e.pos);
       e.motorMat.opacity = 0.9;
@@ -269,7 +278,7 @@ class Rockets {
       const d = e.pos.distanceTo(u.position);
       if (d > ROCKET_BLAST_RADIUS) continue;
       const t = 1 - d / ROCKET_BLAST_RADIUS; // 1 at center -> 0 at edge
-      const raw = Math.round(lerp(ROCKET_DAMAGE_MIN, ROCKET_DAMAGE, smoothstep(t)));
+      const raw = Math.round(lerp(e.damageMin, e.damage, smoothstep(t)));
       const dealt = u.takeDamage(raw, "hard");
       if (dealt > 0 && this.onDamage) this.onDamage(e.owner, u, dealt);
       if (dealt > 0 && u.hp <= 0 && this.onKill) this.onKill(e.owner, u);
@@ -283,7 +292,7 @@ class Rockets {
         const d = e.pos.distanceTo(g.position);
         if (d > ROCKET_BLAST_RADIUS) continue;
         const t = 1 - d / ROCKET_BLAST_RADIUS;
-        const raw = Math.round(lerp(ROCKET_DAMAGE_MIN, ROCKET_DAMAGE, smoothstep(t)));
+        const raw = Math.round(lerp(e.damageMin, e.damage, smoothstep(t)));
         if (g.takeDamage(raw, "hard") && this.onAADisabled) this.onAADisabled(g);
       }
     }

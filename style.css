@@ -502,6 +502,7 @@ canvas {
 
 #vehicle-control,
 #loadout-control,
+#difficulty-control,
 #cpu-control,
 #rifle-control,
 #plane-control,
@@ -637,6 +638,28 @@ canvas {
 }
 
 #loadout-control button:active {
+  transform: scale(0.95);
+}
+
+#difficulty-control button {
+  min-width: 86px;
+  height: 34px;
+  padding: 0 16px;
+  font: 700 13px/1 ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+  letter-spacing: 3px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+#difficulty-control button:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+#difficulty-control button:active {
   transform: scale(0.95);
 }
 

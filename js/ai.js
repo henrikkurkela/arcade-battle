@@ -9,6 +9,120 @@
 // `ctx` = { player, tanks, terrain } (built by main.js).
 // ---------------------------------------------------------------------------
 
+// --- Difficulty (M1) ----------------------------------------------------------
+// Per-difficulty AI tuning, chosen in the start / game-over menu. Error values
+// are in degrees; converted to radians at the fire sites (main.js). `AI` is the
+// active set; setDifficulty() (main.js) swaps it. Phase 1 covers tanks +
+// riflemen; planes + AA guns get their own fields in phase 2.
+const AI_DIFF = {
+  easy: {
+    tankErrorBase: 2.0, // deg; MG spread at close range
+    tankErrorRange: 4.0, // deg; extra spread at max range
+    rifleErrorBase: 2.5,
+    rifleErrorRange: 5.0,
+    aimWarmup: 3.0, // x; extra error while the target is not locked (M2)
+    focusTime: 2.0, // s; focus needed for a full lock (M2)
+    tankMgRange: 500, // m; max MG firing distance (M3)
+    tankEngage: 800, // m; target pickup range (M3)
+    tankShellRange: 350, // m; max shell arc range (M3)
+    rifleFireRange: 100, // m; rifleman firing range (M3)
+    rifleEngage: 120, // m; rifleman target pickup range (M3)
+    rifleLead: 0.0, // s; extra lead built into the aim (M3)
+    aiMgDamage: 12, // HP; AI MG shot damage (M4)
+    aiShellDamage: 45, // HP; AI shell blast-center damage (M4)
+    planeErrorBase: 0.6, // deg; plane cannon spread at close range (M5)
+    planeErrorRange: 0.8, // deg; extra spread at max range (M5)
+    planeEngage: 950, // m; plane target pickup range (M5)
+    planeFireRange: 550, // m; plane cannon firing range (M5)
+    planeRocketRange: 320, // m; plane rocket arc range (M5)
+    aiPlaneBulletDamage: 16, // HP; AI plane tracer damage (M5)
+    aiPlaneRocketDamage: 26, // HP; AI plane rocket blast-center damage (M5)
+    aaErrorBase: 1.2, // deg; AA tracer spread at close range (M6)
+    aaErrorRange: 2.4, // deg; extra spread at max range (M6)
+    aaEngage: 550, // m; AA target pickup range (M6)
+    aaBulletDamage: 18, // HP; AA tracer damage (M6)
+    aaRocketDamage: 26, // HP; AA rocket blast-center damage (M6)
+  },
+  normal: {
+    tankErrorBase: 1.0,
+    tankErrorRange: 2.0,
+    rifleErrorBase: 1.2,
+    rifleErrorRange: 2.5,
+    aimWarmup: 2.0,
+    focusTime: 1.2,
+    tankMgRange: 650,
+    tankEngage: 1000,
+    tankShellRange: 425,
+    rifleFireRange: 125,
+    rifleEngage: 140,
+    rifleLead: 0.15,
+    aiMgDamage: 16,
+    aiShellDamage: 60,
+    planeErrorBase: 0.4,
+    planeErrorRange: 0.6,
+    planeEngage: 1050,
+    planeFireRange: 625,
+    planeRocketRange: 350,
+    aiPlaneBulletDamage: 19,
+    aiPlaneRocketDamage: 32,
+    aaErrorBase: 0.6,
+    aaErrorRange: 1.2,
+    aaEngage: 625,
+    aaBulletDamage: 21,
+    aaRocketDamage: 32,
+  },
+  hard: {
+    tankErrorBase: 0.4,
+    tankErrorRange: 0.8,
+    rifleErrorBase: 0.5,
+    rifleErrorRange: 1.0,
+    aimWarmup: 1.0,
+    focusTime: 0.6,
+    tankMgRange: 800,
+    tankEngage: 1200,
+    tankShellRange: 500,
+    rifleFireRange: 150,
+    rifleEngage: 160,
+    rifleLead: 0.3,
+    aiMgDamage: 20,
+    aiShellDamage: 75,
+    planeErrorBase: 0.2,
+    planeErrorRange: 0.4,
+    planeEngage: 1200,
+    planeFireRange: 700,
+    planeRocketRange: 400,
+    aiPlaneBulletDamage: 21,
+    aiPlaneRocketDamage: 35,
+    aaErrorBase: 0.4,
+    aaErrorRange: 0.8,
+    aaEngage: 700,
+    aaBulletDamage: 24,
+    aaRocketDamage: 35,
+  },
+};
+let AI = Object.assign({}, AI_DIFF.normal); // active set (swapped by main.js)
+
+const _SPREAD_UP = new THREE.Vector3(0, 1, 0);
+const _SPREAD_RIGHT = new THREE.Vector3(1, 0, 0);
+
+/** Rotate `dir` in place by a random angle <= the per-shot error (radians).
+ *  The error grows with the shooter-target distance and is worse while the
+ *  target is not locked (the focus ramp lands in M2). */
+function applySpread(dir, dist, base, range, fireRange, lock, warmup) {
+  const f = clamp(dist / fireRange, 0, 1);
+  const ang = (base + range * f) * (1 + warmup * (1 - lock));
+  if (ang <= 0) return;
+  const a = Math.random() * ang;
+  const phi = Math.random() * Math.PI * 2;
+  // Random axis in the plane perpendicular to dir.
+  const ref = Math.abs(dir.y) < 0.99 ? _SPREAD_UP : _SPREAD_RIGHT;
+  const x = new THREE.Vector3().crossVectors(dir, ref).normalize();
+  const y = new THREE.Vector3().crossVectors(dir, x);
+  dir.addScaledVector(x, Math.cos(phi) * a)
+    .addScaledVector(y, Math.sin(phi) * a)
+    .normalize();
+}
+
 class PlayerController {
   constructor() {
     this.control = {
@@ -88,8 +202,8 @@ class PlanePlayerController {
 
 // --- TankAI tuning -----------------------------------------------------------
 const RETARGET_INTERVAL = 0.3; // s between target re-picks
-const ENGAGE_RANGE = 1200; // m; nearest enemy within this is engaged
-const MG_FIRE_RANGE = 800; // m; max MG firing distance
+// Engage / fire ranges come from the active difficulty set (AI.tankEngage,
+// AI.tankMgRange, AI.tankShellRange) so they can be swapped mid-session.
 const MG_FIRE_CONE = 0.97; // barrel must be within ~14 deg of the aim point
   const MG_FIRE_INTERVAL_AI = 0.15; // s between AI MG shots
   const MG_BURST_ROUNDS = 5; // rounds per MG burst
@@ -99,7 +213,6 @@ const BACKOFF_RANGE = 120; // m; closer than this -> back off (reverse)
 const LOOKAHEAD = 25; // m ahead of the hull to sample the terrain
 const BATTLE_RADIUS = 1200; // m from the map center (leash)
 const AI_SHELL_COOLDOWN = 20; // s between a tank's shell launches
-const AI_SHELL_RANGE = 500; // m; max range for a shell to arc onto the target
 const AI_SHELL_CONE = 0.92; // barrel must be within ~23 deg of the aim point
 const K_STEER = 1.5; // hull yaw servo gain (max turn = TURN_RATE, enforced in tank.js)
 const TURRET_YAW_RATE = 1.5; // rad/s AI turret slew
@@ -122,6 +235,8 @@ class TankAI {
     this.shellCooldown = 0;
     this.burstLeft = 0; // rounds left in the current MG burst
     this.burstPause = 0; // s until the next MG burst may start
+    this.focus = 0; // s the aim has held the target in the fire cone (M2)
+    this.lock = 0; // focus / focusTime, clamped to [0, 1] (M2)
     // Ballistic launch direction for the next shell (read by main.js when
     // control.shellFiring is set). Arcs the unguided shell onto the aim point.
     this.shellDir = new THREE.Vector3();
@@ -141,6 +256,7 @@ class TankAI {
     this.shellCooldown = 0;
     this.burstLeft = 0;
     this.burstPause = 0;
+    this.focus = 0;
     this.control.firing = false;
     this.control.shellFiring = false;
   }
@@ -159,19 +275,17 @@ class TankAI {
     //    (reverse) when inside BACKOFF_RANGE of the target.
     const t = this.target;
     const engaging = t && t.alive;
-    c.throttle =
-      engaging && tank.position.distanceTo(t.position) < BACKOFF_RANGE
-        ? -0.7
-        : engaging
-          ? 1.0
-          : 0.7;
+    const backingOff = engaging && tank.position.distanceTo(t.position) < BACKOFF_RANGE;
+    c.throttle = backingOff ? -0.7 : engaging ? 1.0 : 0.7;
 
     // 2. Target selection (nearest alive enemy tank in range).
+    const prevTarget = this.target;
     this.retargetTimer -= dt;
     if (this.retargetTimer <= 0 || !this.target || !this.target.alive) {
       this.retargetTimer = RETARGET_INTERVAL;
       this._pickTarget(tank, ctx);
     }
+    if (this.target !== prevTarget) this.focus = 0; // re-target: fresh tracking
 
     // 3. Lead the target so tracers meet it (loiter: the player's position).
     // Tracers inherit the shooter's velocity (combat.js), so use the
@@ -230,7 +344,7 @@ class TankAI {
     let shellArc = false;
     if (t && t.alive && this.shellCooldown <= 0) {
       if (
-        tank.position.distanceTo(this._aim) < AI_SHELL_RANGE &&
+        tank.position.distanceTo(this._aim) < AI.tankShellRange &&
         rocketLaunchDir(tank.position, this._aim, this.shellDir)
       ) {
         shellArc = true;
@@ -263,11 +377,13 @@ class TankAI {
     // 6. Fire the MG in bursts (real-world discipline: shoot a burst, observe
     // the tracers, re-aim, repeat). A burst is MG_BURST_ROUNDS rounds at the
     // inter-round interval, then a MG_BURST_PAUSE pause before the next burst.
+    let inCone = false; // aim held on the target (the same condition that gates fire)
     if (t && t.alive) {
       this._toTgt.copy(this._aim).sub(tank.position);
-      if (this._toTgt.length() < MG_FIRE_RANGE) {
+      if (this._toTgt.length() < AI.tankMgRange) {
         tank.barrelDir(this._barrel);
         if (this._barrel.dot(this._toTgt.normalize()) > MG_FIRE_CONE) {
+          inCone = true;
           // In a burst: fire the next round once the inter-round cooldown is up.
           if (this.burstLeft > 0 && this.fireCooldown <= 0) {
             c.firing = true;
@@ -301,12 +417,18 @@ class TankAI {
     this.fireCooldown -= dt;
     this.shellCooldown -= dt;
     this.burstPause -= dt;
+
+    // 7b. Focus / lock (M2): accumulate while the aim is held on the target;
+    // re-target, target death, backing off, or leaving the cone reset it.
+    if (inCone && !backingOff) this.focus += dt;
+    else this.focus = 0;
+    this.lock = clamp(this.focus / AI.focusTime, 0, 1);
     return this.control;
   }
 
   _pickTarget(tank, ctx) {
     let best = null;
-    let bestD = ENGAGE_RANGE;
+    let bestD = AI.tankEngage;
     const consider = (p) => {
       if (!p || !p.alive) return;
       const d = tank.position.distanceTo(p.position);
@@ -327,15 +449,14 @@ class TankAI {
 
 // --- RiflemanAI tuning -------------------------------------------------------
 const RIFLEMAN_RETARGET = 0.5; // s between target re-picks
-const RIFLEMAN_ENGAGE_RANGE = 160; // m; nearest tank within this is engaged
-const RIFLEMAN_FIRE_RANGE = 150; // m; stop and fire inside this
+// Engage / fire ranges come from the active difficulty set (AI.rifleEngage,
+// AI.rifleFireRange) so they can be swapped mid-session.
 const RIFLEMAN_HOLD_RANGE = 110; // m; closer than this -> back off (reverse)
 const RIFLEMAN_BURST_TIME = 0.9; // s of firing per burst
 const RIFLEMAN_PAUSE_MIN = 1.0; // s between bursts (random up to MAX)
 const RIFLEMAN_PAUSE_MAX = 2.4;
 const RIFLEMAN_FIRE_INTERVAL = 0.12; // s between rifle shots in a burst
 const RIFLEMAN_FIRE_CONE = 0.94; // body must be within ~20 deg of the aim point
-const RIFLEMAN_LEAD = 0.3; // extra s of target motion built into the aim
 
 class RiflemanAI {
   constructor() {
@@ -346,6 +467,8 @@ class RiflemanAI {
     this.burstLeft = 0; // s of the current burst still firing
     this.pauseLeft = 0; // s until the next burst may start
     this.backingOff = false; // turning and walking away (no fire while doing it)
+    this.focus = 0; // s the aim has held the target in the fire cone (M2)
+    this.lock = 0; // focus / focusTime, clamped to [0, 1] (M2)
     // Exact world direction of the next tracer (lead built in); main.js
     // fires along this, so the body only needs to be roughly aligned.
     this.aimDir = new THREE.Vector3(0, 0, -1);
@@ -362,6 +485,7 @@ class RiflemanAI {
     this.burstLeft = 0;
     this.pauseLeft = 0;
     this.backingOff = false;
+    this.focus = 0;
     this.control.firing = false;
   }
 
@@ -372,11 +496,13 @@ class RiflemanAI {
     c.firing = false;
 
     // 1. Target selection (nearest alive tank in range, any team).
+    const prevTarget = this.target;
     this.retargetTimer -= dt;
     if (this.retargetTimer <= 0 || !this.target || !this.target.alive) {
       this.retargetTimer = RIFLEMAN_RETARGET;
       this._pickTarget(r, ctx);
     }
+    if (this.target !== prevTarget) this.focus = 0; // re-target: fresh tracking
     const t = this.target;
     const engaging = t && t.alive;
 
@@ -399,9 +525,9 @@ class RiflemanAI {
           MG_BULLET_SPEED +
           (r.velocity.x - t.velocity.x) * this._toTgt.x +
           (r.velocity.z - t.velocity.z) * this._toTgt.z;
-        const leadTime = dist / Math.max(closing, 40) + RIFLEMAN_LEAD;
+        const leadTime = dist / Math.max(closing, 40) + AI.rifleLead;
         this._aim.copy(t.position).addScaledVector(t.velocity, leadTime);
-        c.throttle = dist > RIFLEMAN_FIRE_RANGE ? 1 : 0;
+        c.throttle = dist > AI.rifleFireRange ? 1 : 0;
       }
     } else {
       this.backingOff = false;
@@ -435,7 +561,8 @@ class RiflemanAI {
     // not the body heading. Alignment is judged on the horizontal bearing, so
     // a rifleman can lay down fire on a plane overhead.
     this.fireCooldown -= dt;
-    if (engaging && !this.backingOff && dist <= RIFLEMAN_FIRE_RANGE) {
+    let canFire = false; // aim held on the target (the same condition that gates fire)
+    if (engaging && !this.backingOff && dist <= AI.rifleFireRange) {
       this._toTgt.copy(this._aim).sub(r.position);
       const toLen = this._toTgt.length();
       let aligned = false;
@@ -449,6 +576,7 @@ class RiflemanAI {
         }
       }
       if (aligned) {
+        canFire = true;
         this.aimDir.copy(this._toTgt);
         if (this.burstLeft > 0) {
           this.burstLeft -= dt;
@@ -467,12 +595,18 @@ class RiflemanAI {
       this.burstLeft = 0;
     }
     if (this.burstLeft <= 0) this.pauseLeft -= dt; // pause runs after the burst
+
+    // Focus / lock (M2): accumulate while the aim is held on the target;
+    // re-target, target death, backing off, or leaving the cone reset it.
+    if (canFire) this.focus += dt;
+    else this.focus = 0;
+    this.lock = clamp(this.focus / AI.focusTime, 0, 1);
     return this.control;
   }
 
   _pickTarget(r, ctx) {
     let best = null;
-    let bestD = RIFLEMAN_ENGAGE_RANGE;
+    let bestD = AI.rifleEngage;
     const consider = (p) => {
       if (!p || !p.alive) return;
       const d = r.position.distanceTo(p.position);
@@ -493,14 +627,13 @@ class RiflemanAI {
 // (Copied from the Arcade Plane game's HostileAI; constants are renamed with a
 // PLANE_ prefix so they don't collide with the tank/rifleman tuning above.)
 const PLANE_RETARGET_INTERVAL = 0.3; // s between target re-picks
-const PLANE_ENGAGE_RANGE = 1200; // m; nearest enemy within this is engaged
-const PLANE_FIRE_RANGE = 700; // m; max firing distance
+// Engage / fire ranges come from the active difficulty set (AI.planeEngage,
+// AI.planeFireRange, AI.planeRocketRange) so they can be swapped mid-session.
 const PLANE_FIRE_INTERVAL = 0.05; // s between shots (~20 rounds/s)
 const PLANE_FIRE_CONE = 0.985; // nose must be within ~10 deg of the aim point
 // Rockets: a powerful splash weapon the AI uses rarely. No ammo limit — a
 // long cooldown between launches keeps them occasional instead of spammy.
 const PLANE_ROCKET_COOLDOWN = 25; // s between a plane's rocket launches
-const PLANE_ROCKET_RANGE = 400; // m; max range for a rocket to arc onto the target
 const PLANE_ROCKET_CONE = 0.92; // nose must be within ~23 deg of the target
 const PLANE_LOOKAHEAD = 60; // m ahead of the nose to sample the terrain
 const PLANE_MIN_CLEARANCE = 25; // m; below this the AI pulls up
@@ -520,6 +653,8 @@ class PlaneAI {
     this.retargetTimer = 0;
     this.fireCooldown = 0;
     this.rocketCooldown = 0;
+    this.focus = 0; // s the nose has held the target in the fire cone (M5)
+    this.lock = 0; // focus / focusTime, clamped to [0, 1] (M5)
     // Ballistic launch direction for the next rocket (read by main.js when
     // control.rocketFiring is set). Arcs the unguided rocket onto the aim point.
     this.rocketDir = new THREE.Vector3();
@@ -538,6 +673,7 @@ class PlaneAI {
     this.retargetTimer = 0;
     this.fireCooldown = 0;
     this.rocketCooldown = 0;
+    this.focus = 0;
     this.control.firing = false;
     this.control.rocketFiring = false;
   }
@@ -561,11 +697,13 @@ class PlaneAI {
           : 0;
 
     // 2. Target selection (nearest alive enemy in range).
+    const prevTarget = this.target;
     this.retargetTimer -= dt;
     if (this.retargetTimer <= 0 || !this.target || !this.target.alive) {
       this.retargetTimer = PLANE_RETARGET_INTERVAL;
       this._pickTarget(plane, ctx);
     }
+    if (this.target !== prevTarget) this.focus = 0; // re-target: fresh tracking
 
     // 3. Lead the target so bullets meet it (loiter: the player's position).
     const t = this.target;
@@ -648,14 +786,17 @@ class PlaneAI {
     if (alt > PLANE_MAX_AI_ALT) c.pitch = -1;
 
     // 6. Firing decision.
+    let inCone = false; // nose held on the target (the same condition that gates fire)
     if (
       t &&
-      this.fireCooldown <= 0 &&
-      this._toTgt.length() < PLANE_FIRE_RANGE &&
+      this._toTgt.length() < AI.planeFireRange &&
       plane.forward.dot(this._local.copy(this._toTgt).normalize()) > PLANE_FIRE_CONE
     ) {
-      c.firing = true;
-      this.fireCooldown = PLANE_FIRE_INTERVAL;
+      inCone = true;
+      if (this.fireCooldown <= 0) {
+        c.firing = true;
+        this.fireCooldown = PLANE_FIRE_INTERVAL;
+      }
     }
 
     // 6b. Rocket decision: rare (long cooldown) and powerful. Needs a target
@@ -664,7 +805,7 @@ class PlaneAI {
     if (
       t &&
       this.rocketCooldown <= 0 &&
-      this._toTgt.length() < PLANE_ROCKET_RANGE &&
+      this._toTgt.length() < AI.planeRocketRange &&
       plane.forward.dot(this._local.copy(this._toTgt).normalize()) > PLANE_ROCKET_CONE &&
       rocketArcDir(plane.position, this._aim, this.rocketDir)
     ) {
@@ -675,12 +816,18 @@ class PlaneAI {
     // 7. Timers.
     this.fireCooldown -= dt;
     this.rocketCooldown -= dt;
+
+    // 7b. Focus / lock (M5): accumulate while the nose is held on the target;
+    // re-target or leaving the cone resets it.
+    if (inCone) this.focus += dt;
+    else this.focus = 0;
+    this.lock = clamp(this.focus / AI.focusTime, 0, 1);
     return this.control;
   }
 
   _pickTarget(plane, ctx) {
     let best = null;
-    let bestD = PLANE_ENGAGE_RANGE;
+    let bestD = AI.planeEngage;
     const consider = (p) => {
       if (!p || !p.alive) return;
       const d = plane.position.distanceTo(p.position);

@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 // Anti-aircraft (AA) guns: a fixed ring of ground turrets around the map
 // center (copied from the Arcade Plane game). Each gun engages any PLANE
-// (CPU) that flies within AA_ENGAGE_RANGE of it and fires pooled tracers
+// (CPU) that flies within AI.aaEngage of it and fires pooled tracers
 // (soft) and rare rockets (hard) at it. AA guns attack PLANES ONLY — they
 // never target tanks or riflemen.
 //
@@ -18,9 +18,9 @@
 
 const AA_COUNT = 16; // turrets around the ring
 const AA_RADIUS = 1000; // m from the map center (the spawn/garage point)
-const AA_ENGAGE_RANGE = 700; // m; engage any plane closer than this
+// Engage range + tracer/rocket damage come from the active difficulty set
+// (AI.aaEngage, AI.aaBulletDamage, AI.aaRocketDamage) so they swap mid-session.
 const AA_FIRE_INTERVAL = 0.1; // s between shots
-const AA_BULLET_DAMAGE = 24; // raw HP per tracer (SOFT; divided by the target's soft armor)
 const AA_HP = 100; // HP before a gun is disabled
 const AA_DISABLE_TIME = 60; // s a gun stays disabled after being knocked out
 const AA_HIT_RADIUS = 6; // m stand-off for a bullet to hit the structure
@@ -38,6 +38,7 @@ const AA_HARD_ARMOR = 2; // vs HARD damage (rockets / main gun)
 // the target steadily (reads as a deliberate "special shot").
 const AA_ROCKET_COOLDOWN = 45; // s between a gun's rocket launches
 const AA_ROCKET_ALIGN = 0.98; // barrel must be within ~11 deg of the aim point
+const AA_FIRE_CONE = 0.94; // barrel within ~20 deg of the aim = "locked on" (focus ramp)
 
 // Gradient for the beam cone: bright at the apex (v=1, the muzzle), fading
 // to transparent at the far end (v=0).
@@ -92,6 +93,8 @@ class AAGun {
     this.hp = AA_HP;
     this.disabled = false; // knocked out: no tracking/firing, searchlight off, smoking
     this.disableTimer = 0; // s until the gun re-enables
+    this.focus = 0; // s the barrel has held the target in the fire cone (M6)
+    this.lock = 0; // focus / focusTime, clamped to [0, 1] (M6)
     // Armor levels (divisors for takeDamage by kind).
     this.softArmor = AA_SOFT_ARMOR;
     this.hardArmor = AA_HARD_ARMOR;
@@ -253,8 +256,9 @@ class AAGun {
     this.rocketCooldown -= dt;
 
     // Nearest alive plane in range.
+    const prevTarget = this.target;
     let best = null;
-    let bestD = AA_ENGAGE_RANGE;
+    let bestD = AI.aaEngage;
     for (const p of planes) {
       if (!p.alive) continue;
       const d = this.position.distanceTo(p.position);
@@ -264,8 +268,12 @@ class AAGun {
       }
     }
     this.target = best;
+    if (this.target !== prevTarget) this.focus = 0; // re-target: fresh tracking
 
-    if (!best) return;
+    if (!best) {
+      this.lock = 0; // no target: no lock
+      return;
+    }
 
     // Lead the target so tracers meet it.
     this._aim.copy(best.position).addScaledVector(best.velocity, bestD / BULLET_SPEED);
@@ -279,6 +287,14 @@ class AAGun {
     const pitch = Math.atan2(dy, horiz);
     this.turret.rotation.y = easeToward(this.turret.rotation.y, yaw, AA_TRACK, dt);
     this.elev.rotation.x = easeToward(this.elev.rotation.x, pitch, AA_TRACK, dt);
+
+    // Barrel alignment: how well the (slewing) barrel is on the aim point. This
+    // drives the focus/lock ramp — a target that evades (barrel lags) drops it.
+    this.group.updateMatrixWorld(true);
+    this.elev.getWorldDirection(this._barrelDir); // local +Z in world space
+    this._barrelDir.negate(); // the barrel points local -Z
+    this._toTgt.copy(this._aim).sub(this.position).normalize();
+    const inCone = this._barrelDir.dot(this._toTgt) > AA_FIRE_CONE;
 
     // Fire along the (now aimed) barrel at the lead point.
     if (this.fireCooldown <= 0) {
@@ -295,10 +311,6 @@ class AAGun {
     // the ballistic arc that brings the unguided rocket down onto the lead
     // point (the gun is stationary, so the solution is exact).
     if (this.rocketCooldown <= 0 && this._lastDir) {
-      this.group.updateMatrixWorld(true);
-      this.elev.getWorldDirection(this._barrelDir); // local +Z in world space
-      this._barrelDir.negate(); // the barrel points local -Z
-      this._toTgt.copy(this._aim).sub(this.position).normalize();
       if (
         this._barrelDir.dot(this._toTgt) > AA_ROCKET_ALIGN &&
         rocketArcDir(this.position, this._aim, this._rocketDir)
@@ -307,6 +319,12 @@ class AAGun {
         this.rocketFired = true;
       }
     }
+
+    // Focus / lock (M6): accumulate while the barrel is held on the target;
+    // re-target or the target evading (barrel lagging) resets it.
+    if (inCone) this.focus += dt;
+    else this.focus = 0;
+    this.lock = clamp(this.focus / AI.focusTime, 0, 1);
   }
 
   /**
@@ -340,17 +358,42 @@ class AAGun {
   }
 
   /** Launch one tracer through the shared pool (SOFT damage; called by the
-   *  manager). */
+    *  manager). Applies the difficulty aim error (M6) to the shot direction. */
   fire(projectiles) {
-    if (!this._lastDir) return;
-    projectiles.fire(this, this._muzzleWorld, this._lastDir, AA_BULLET_DAMAGE, "soft");
+    if (!this._lastDir || !this.target) return;
+    applySpread(
+      this._lastDir,
+      this.position.distanceTo(this.target.position),
+      THREE.MathUtils.degToRad(AI.aaErrorBase),
+      THREE.MathUtils.degToRad(AI.aaErrorRange),
+      AI.aaEngage,
+      this.lock,
+      AI.aimWarmup
+    );
+    projectiles.fire(this, this._muzzleWorld, this._lastDir, AI.aaBulletDamage, "soft");
   }
 
   /** Launch one rocket through the shared pool (HARD damage; called by the
-   *  manager). */
+    *  manager). Applies the difficulty aim error (M6) + scaled splash damage. */
   fireRocket(rockets) {
-    if (!this._rocketDir) return;
-    rockets.fire(this, this._muzzleWorld, this._rocketDir, "hard");
+    if (!this._rocketDir || !this.target) return;
+    applySpread(
+      this._rocketDir,
+      this.position.distanceTo(this.target.position),
+      THREE.MathUtils.degToRad(AI.aaErrorBase),
+      THREE.MathUtils.degToRad(AI.aaErrorRange),
+      AI.aaEngage,
+      this.lock,
+      AI.aimWarmup
+    );
+    rockets.fire(
+      this,
+      this._muzzleWorld,
+      this._rocketDir,
+      "hard",
+      rockets.baseDamage * (AI.aaRocketDamage / ROCKET_DAMAGE),
+      rockets.baseDamageMin * (AI.aaRocketDamage / ROCKET_DAMAGE)
+    );
   }
 }
 
@@ -405,6 +448,7 @@ class AAGuns {
       g.disableTimer = 0;
       g.target = null;
       g.rocketCooldown = 0;
+      g.focus = 0;
     }
   }
 

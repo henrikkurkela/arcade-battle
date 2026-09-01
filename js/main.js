@@ -69,9 +69,6 @@ const Game = (() => {
 
   // --- AI fleet (M4) ---------------------------------------------------------
   const CPU_RESPAWN_DELAY = 3; // s before a destroyed CPU reappears
-  // SOFT damage (small arms). Boosted 10x over the pre-armor value (2); a
-  // tank's TANK_SOFT_ARMOR (10) cancels it, so a tank still takes 2 per hit.
-  const MG_DAMAGE_AI = 20; // raw damage per AI tracer
   const CAM_SHAKE_DESTROYED = 1.6; // camera shake when the player is destroyed
   const OVERLAY_DELAY = 0.8; // s the destruction registers before the panel appears
   // Chance a CPU tank kill triggers a special effect (the turret blow-off).
@@ -126,13 +123,9 @@ const Game = (() => {
   // All planes are CPU (the player drives the tank). They dogfight each other
   // and the ground forces; the player can shoot them down too.
   const PLANE_COUNT = 4; // default fleet size (menu allows 0-16)
-  const PLANE_MAX = 16; // max planes
-  const PLANE_RESPAWN_DELAY = 3; // s before a downed plane reappears
-  // SOFT damage (cannon). A plane's PLANE_SOFT_ARMOR (3) leaves 7 per tracer
-  // (21/3), matching the legacy plane-vs-plane value; the same tracer now
-  // chews through ground armor (21/10 = 2 vs a tank).
-  const PLANE_BULLET_DAMAGE = 21; // raw damage per CPU plane tracer
-  // Plane liveries + callsigns (16, matching the menu's 0-16 range).
+   const PLANE_MAX = 16; // max planes
+   const PLANE_RESPAWN_DELAY = 3; // s before a downed plane reappears
+   // Plane liveries + callsigns (16, matching the menu's 0-16 range).
   const PLANE_LIVERIES = [
     0x3a4150, 0x556b2f, 0x8a4b3a, 0x3f5d7a, 0x6b5b95, 0x2f6f6f,
     0xb3372f, 0xc96a2b, 0xbf9b30, 0x7a9a2f, 0x3f7a33, 0x3585a0,
@@ -308,6 +301,8 @@ const Game = (() => {
   const loadoutControl = document.getElementById("loadout-control");
   const loadoutToggle = document.getElementById("loadout-toggle");
   const loadoutDesc = document.getElementById("loadout-desc");
+  const difficultyControl = document.getElementById("difficulty-control");
+  const difficultyToggle = document.getElementById("difficulty-toggle");
   const planeWeaponsHint = document.getElementById("plane-weapons-hint");
   const planeRocketHint = document.getElementById("plane-rocket-hint");
   const hudAltRow = document.getElementById("hud-alt-row");
@@ -522,6 +517,7 @@ const Game = (() => {
   let vehicle = VEHICLE_TANK; // selected vehicle (persisted)
   let tankLoadout = "standard"; // selected tank loadout (persisted)
   let planeLoadout = "standard"; // selected plane loadout (persisted)
+  let difficulty = "normal"; // selected difficulty tier (persisted)
   // Effective loadout values for the ACTIVE vehicle, set by applyLoadout().
   // Only the active vehicle's fire sites read these.
   let mgDamageMul = 1;
@@ -577,6 +573,7 @@ const Game = (() => {
   let overlayDelay = 0; // s until the destroyed overlay appears
   const _muzzle = new THREE.Vector3();
   const _barrel = new THREE.Vector3();
+  const _planeDir = new THREE.Vector3(); // plane cannon shot dir (spread applied in place)
   const _aimPt = new THREE.Vector3();
   const _smokePt = new THREE.Vector3();
   const _foliagePt = new THREE.Vector3(); // felled-tree burst point (mid-trunk)
@@ -954,6 +951,26 @@ const Game = (() => {
     const lo = activeLoadout();
     loadoutToggle.textContent = lo.name;
     loadoutDesc.textContent = lo.desc;
+  }
+
+  /** Cycle the difficulty to the next tier (title screen). */
+  function cycleDifficulty() {
+    const list = ["easy", "normal", "hard"];
+    difficulty = list[(list.indexOf(difficulty) + 1) % list.length];
+    setDifficulty(difficulty);
+  }
+
+  /** Sync the difficulty button label to the selected tier. */
+  function updateDifficultyUI() {
+    difficultyToggle.textContent = difficulty.toUpperCase();
+  }
+
+  /** Swap the active AI tuning set to the selected tier and persist it. */
+  function setDifficulty(level) {
+    difficulty = level;
+    AI = Object.assign({}, AI_DIFF[level]);
+    updateDifficultyUI();
+    saveSettings();
   }
 
   /** Reflect the active plane loadout's removed weapons in the control hints. */
@@ -1849,6 +1866,7 @@ const Game = (() => {
           vehicle,
           tankLoadout,
           planeLoadout,
+          difficulty,
           cpuCount,
           riflemanCount,
           planeCount,
@@ -1902,6 +1920,9 @@ const Game = (() => {
     ? savedSettings.tankLoadout : "standard";
   planeLoadout = LOADOUTS.plane.some((l) => l.id === savedSettings.planeLoadout)
     ? savedSettings.planeLoadout : "standard";
+  difficulty =
+    savedSettings.difficulty === "easy" || savedSettings.difficulty === "hard"
+      ? savedSettings.difficulty : "normal";
   EngineAudio.setMuted(!!savedSettings.muted);
   mutedBadge.classList.toggle("hidden", !EngineAudio.isMuted());
   // Performance meter (H): hidden by default; the choice persists.
@@ -1980,6 +2001,7 @@ const Game = (() => {
     rifleControl.classList.toggle("hidden", state === "paused");
     planeControl.classList.toggle("hidden", state === "paused");
     aaControl.classList.toggle("hidden", state === "paused");
+    difficultyControl.classList.toggle("hidden", state === "paused");
     // The scoreboard only makes sense mid-run (paused) or after destruction.
     const showBoard = state === "paused" || state === "destroyed";
     scoreboard.classList.toggle("hidden", !showBoard);
@@ -1996,6 +2018,7 @@ const Game = (() => {
     const resuming = state === "paused";
     state = "playing";
     hideOverlay();
+    setDifficulty(difficulty); // the chosen tier is in effect for the run
     EngineAudio.start(); // user gesture: allowed to create the AudioContext
     Music.start();
     if (!resuming) {
@@ -2024,6 +2047,7 @@ const Game = (() => {
     // Fresh player unit on the same map, fleet respawned, score reset.
     state = "playing";
     hideOverlay();
+    setDifficulty(difficulty); // the chosen tier is in effect for the run
     EngineAudio.start();
     Music.start();
       Music.newFlight();
@@ -2117,6 +2141,7 @@ const Game = (() => {
     setVehicle(vehicle === VEHICLE_TANK ? VEHICLE_PLANE : VEHICLE_TANK)
   );
   loadoutToggle.addEventListener("click", () => { unlockAudio(); cycleLoadout(); });
+  difficultyToggle.addEventListener("click", () => { unlockAudio(); cycleDifficulty(); });
   cpuMinus.addEventListener("click", () => { unlockAudio(); setCpuCount(cpuCount - 1); });
   cpuPlus.addEventListener("click", () => { unlockAudio(); setCpuCount(cpuCount + 1); });
   rifleMinus.addEventListener("click", () => { unlockAudio(); setRiflemanCount(riflemanCount - 1); });
@@ -2520,13 +2545,41 @@ const Game = (() => {
         emitDust(cp, dt, ac.steer);
         tickCooldowns(cp, dt);
         if (ac.firing) {
-          tracers.fire(cp, cp.mgMuzzleWorld(_muzzle), cp.barrelDir(_barrel), MG_DAMAGE_AI);
+          // Difficulty aim error (M1): the turret still tracks the lead, but
+          // the shot sprays by a random angle that grows with range.
+          applySpread(
+            cp.barrelDir(_barrel),
+            cp.position.distanceTo(slot.ai.target.position),
+            THREE.MathUtils.degToRad(AI.tankErrorBase),
+            THREE.MathUtils.degToRad(AI.tankErrorRange),
+            AI.tankMgRange,
+            slot.ai.lock,
+            AI.aimWarmup
+          );
+          tracers.fire(cp, cp.mgMuzzleWorld(_muzzle), _barrel, AI.aiMgDamage);
           flashes.flash(_muzzle);
           EngineAudio.mgFire(cp.position.distanceTo(player.position));
         }
         // Rare AI shells: unguided splash on a ballistic arc (dir from the AI).
         if (ac.shellFiring) {
-          if (shells.fire(cp, cp.muzzleWorld(_muzzle), slot.ai.shellDir)) {
+          applySpread(
+            slot.ai.shellDir,
+            cp.position.distanceTo(slot.ai.target.position),
+            THREE.MathUtils.degToRad(AI.tankErrorBase),
+            THREE.MathUtils.degToRad(AI.tankErrorRange),
+            AI.tankMgRange,
+            slot.ai.lock,
+            AI.aimWarmup
+          );
+          if (
+            shells.fire(
+              cp,
+              cp.muzzleWorld(_muzzle),
+              slot.ai.shellDir,
+              shells.baseDamage * (AI.aiShellDamage / SHELL_DAMAGE),
+              shells.baseDamageMin * (AI.aiShellDamage / SHELL_DAMAGE)
+            )
+          ) {
             flashes.flash(_muzzle);
             EngineAudio.shellLaunch(cp.position.distanceTo(player.position));
           }
@@ -2548,7 +2601,18 @@ const Game = (() => {
         blockAAGun(r, _prevPos, false); // blocked by AA guns, but takes no damage
         if (!r.alive) destroyRifleman(slot, null); // e.g. died to obstacle chip damage
         if (rc.firing && r.alive) {
-          tracers.fire(r, r.muzzleWorld(_muzzle), slot.ai.aimDir, MG_DAMAGE_AI);
+          // Difficulty aim error (M1): the body still tracks the lead, but the
+          // tracer sprays by a random angle that grows with range.
+          applySpread(
+            slot.ai.aimDir,
+            r.position.distanceTo(slot.ai.target.position),
+            THREE.MathUtils.degToRad(AI.rifleErrorBase),
+            THREE.MathUtils.degToRad(AI.rifleErrorRange),
+            AI.rifleFireRange,
+            slot.ai.lock,
+            AI.aimWarmup
+          );
+          tracers.fire(r, r.muzzleWorld(_muzzle), slot.ai.aimDir, AI.aiMgDamage);
           flashes.flash(_muzzle);
           EngineAudio.mgFire(r.position.distanceTo(player.position));
         }
@@ -2566,13 +2630,43 @@ const Game = (() => {
         cp.update(dt, ac);
         emitDamageSmoke(cp, dt);
         if (ac.firing) {
-          projectiles.fire(cp, cp.muzzleWorld(_muzzle), cp.forward, PLANE_BULLET_DAMAGE, "soft");
+          // Difficulty aim error (M5): the nose still tracks the lead, but the
+          // shot sprays by a random angle that grows with range.
+          _planeDir.copy(cp.forward);
+          applySpread(
+            _planeDir,
+            cp.position.distanceTo(slot.ai.target.position),
+            THREE.MathUtils.degToRad(AI.planeErrorBase),
+            THREE.MathUtils.degToRad(AI.planeErrorRange),
+            AI.planeFireRange,
+            slot.ai.lock,
+            AI.aimWarmup
+          );
+          projectiles.fire(cp, cp.muzzleWorld(_muzzle), _planeDir, AI.aiPlaneBulletDamage, "soft");
           flashes.flash(_muzzle);
           EngineAudio.fire(cp.position.distanceTo(player.position));
         }
         // Rare CPU rockets: unguided splash on a ballistic arc (dir from the AI).
         if (ac.rocketFiring) {
-          if (rockets.fire(cp, cp.muzzleWorld(_muzzle), slot.ai.rocketDir, "hard")) {
+          applySpread(
+            slot.ai.rocketDir,
+            cp.position.distanceTo(slot.ai.target.position),
+            THREE.MathUtils.degToRad(AI.planeErrorBase),
+            THREE.MathUtils.degToRad(AI.planeErrorRange),
+            AI.planeRocketRange,
+            slot.ai.lock,
+            AI.aimWarmup
+          );
+          if (
+            rockets.fire(
+              cp,
+              cp.muzzleWorld(_muzzle),
+              slot.ai.rocketDir,
+              "hard",
+              rockets.baseDamage * (AI.aiPlaneRocketDamage / ROCKET_DAMAGE),
+              rockets.baseDamageMin * (AI.aiPlaneRocketDamage / ROCKET_DAMAGE)
+            )
+          ) {
             flashes.flash(_muzzle);
             EngineAudio.rocketLaunch(cp.position.distanceTo(player.position));
           }
@@ -2778,6 +2872,7 @@ const Game = (() => {
   showOverlay("ARCADE BATTLE", "", "Drive");
   updateTitleOverlay(); // set the text/button for the selected vehicle (M9)
   applyLoadout(); // apply the persisted loadout to the player unit + UI
+  setDifficulty(difficulty); // apply the persisted difficulty to the AI table + UI
   requestAnimationFrame(frame);
 
   return { onKeyDown, onPointerUnlock };
