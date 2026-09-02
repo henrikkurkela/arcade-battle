@@ -138,10 +138,10 @@ vehicles) and when the plane's STALL warning appears.
   falling to 12 at the edge). Rockets are finite: you start with 6, and every
   100 HP of damage you deal (cannon or rocket) earns one more, up to the cap.
 - **Riflemen:** foot infantry (four by default) with 40 HP and no armor. They
-   walk toward the nearest tank, stop at firing range, and lay down burst fire;
-   pressed up close they turn and walk away. Tank MG fire, shell splashes, and
-   plane cannon/rockets all kill them fast — and a moving tank can simply run
-   them over.
+   walk toward the nearest tank or plane, stop at firing range, and lay down
+   burst fire; pressed up close they turn and walk away. Tank MG fire, shell
+   splashes, and plane cannon/rockets all kill them fast — and a moving tank
+   can simply run them over.
 - **CPU planes:** a fleet of fighters (four by default) that dogfights each
   other and the ground forces, spraying cannon and launching rare rockets.
   Shoot one down for a kill; colliding with one (or hitting the ground or
@@ -237,14 +237,21 @@ vehicles) and when the plane's STALL warning appears.
     puffs, damage smoke, the day/night environment blend, and the persisted
     settings (localStorage: vehicle, loadouts, difficulty,
     enemy/rifleman/plane/AA counts, volumes, mute, day/night, best score,
-    performance meter visibility).
+    performance meter visibility). It also runs a throttled console
+    performance log (enabled by default; one summary line per second with the
+    frame rate, frame time, worst frame, the CPU/GPU split, the draw calls and
+    triangle count, the active unit/effect counts, and per-phase timings —
+    player, AI, rifleman, plane, AA, collisions, weapons, environment, misc,
+    audio, effects, HUD — for profiling big battles).
 - `js/tank.js` — the tank (primitive-based model: hull, tracks with road
   wheels, yawing turret with a pitching barrel, muzzle marker, optional
   livery color) and the arcade ground-vehicle model: throttle/brake/coast,
    speed-scaled steering that inverts in reverse, terrain following (hull y
    from the four corners, eased pitch/roll), a traction model that bleeds off
-   top speed as slopes approach the 35° spin-out limit (descents are boosted),
-   and the mouse-driven turret (yaw, clamped pitch).
+    top speed as slopes approach the 35° spin-out limit (descents are boosted),
+    and the mouse-driven turret (yaw, clamped pitch), with a player-only
+    barrel-stability correction that counter-rotates the turret against the
+    hull's terrain pitch so the barrel keeps its world-space direction.
    Loadout multipliers (player only, set by main.js) scale the turret slew
    rate and top speed, and an optional traverse cone caps the hull-relative
     turret yaw to a cone in front of the hull (the assault gun). `update(dt,
@@ -279,9 +286,11 @@ vehicles) and when the plane's STALL warning appears.
   preferred engagement range, a battle-area leash (they never stray far beyond
   ~1.2 km of the map center), turret slewing, and firing decisions (burst MG fire
   plus a rare arced shell on a long cooldown). `RiflemanAI` drives a rifleman
-  (advance to firing range, burst fire, back off when pressed). `PlaneAI`
-   steers a CPU plane (nearest-enemy pursuit, collision avoidance, terrain and
-   altitude limits, cannon spray plus a rare arced rocket). All behavior is
+   (nearest-tank-or-plane target selection, advance to firing range, burst fire,
+   back off when pressed). `PlaneAI`
+    steers a CPU plane (nearest-enemy pursuit, collision avoidance, terrain and
+    altitude limits, a battle-area leash (they never stray far beyond the AA
+    ring), cannon spray plus a rare arced rocket). All behavior is
    driven by named tuning constants at the top of the file; the AI's aim
    error, engagement/fire ranges, and shot damage come from a per-difficulty
    tuning set (EASY / NORMAL / HARD, chosen on the title screen and swapped
