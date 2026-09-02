@@ -209,6 +209,7 @@ const Game = (() => {
   //   cannon       — plane cannon enabled
   //   rockets      — plane rockets enabled
   //   unlimitedRockets — rockets never run out (no ammo / earn needed)
+  //   rocketDamage — plane rocket splash damage multiplier (1 = normal)
   //   heatPerShot  — gun-heat-per-shot fraction (1 = normal; lower = slower overheat)
   //   agility      — plane roll/pitch rate multiplier (1 = normal; >1 = more nimble)
   //   speed        — plane thrust multiplier (1 = normal; >1 = faster)
@@ -229,8 +230,9 @@ const Game = (() => {
       { id: "standard", name: "STANDARD", desc: "Cannon and rockets.",
         cannon: true, rockets: true, unlimitedRockets: false, heatPerShot: 1.0,
         agility: 1.0, speed: 1.0 },
-      { id: "tankbuster", name: "TANK BUSTER", desc: "No cannon — a ballistic computer shows your rocket's arc and calls ZEROED on a target. Unlimited rockets; heavier and slower.",
+      { id: "tankbuster", name: "TANK BUSTER", desc: "No cannon — a ballistic computer shows your rocket's arc and calls ZEROED on a target. Unlimited rockets at +50% damage; heavier and slower.",
         cannon: false, rockets: true, unlimitedRockets: true, heatPerShot: 1.0,
+        rocketDamage: 1.5,
         ballisticComputer: true,
         agility: 0.9, speed: 0.9 },
       { id: "dogfighter", name: "DOGFIGHTER", desc: "No rockets, cannon overheats 2x slower; more agile and faster.",
@@ -523,6 +525,7 @@ const Game = (() => {
   let mgDamageMul = 1;
   let mgRateMul = 1;
   let shellDamageMul = 1;
+  let rocketDamageMul = 1; // plane rocket splash damage (the Tank Buster loadout)
   let heatPerShotMul = 1;
   let cannonEnabled = true;
   let rocketsEnabled = true;
@@ -913,6 +916,7 @@ const Game = (() => {
   cannonEnabled = lo.cannon ?? true;
   rocketsEnabled = lo.rockets ?? true;
   unlimitedRockets = lo.unlimitedRockets ?? false;
+  rocketDamageMul = lo.rocketDamage ?? 1;
   mgEnabled = lo.mgEnabled ?? true;
   ballisticComputer = lo.ballisticComputer ?? false;
   // HUD: the rocket row is only useful for a plane that actually has rockets.
@@ -2590,7 +2594,7 @@ const Game = (() => {
         // Rockets: hold X. Finite ammo, earned by dealing damage.
         rocketFireCooldown -= dt;
         if (rocketsEnabled && pc.rocketFiring && rocketFireCooldown <= 0 && (unlimitedRockets || rocketAmmo > 0)) {
-          if (rockets.fire(plane, plane.muzzleWorld(_muzzle), plane.forward, "hard")) {
+          if (rockets.fire(plane, plane.muzzleWorld(_muzzle), plane.forward, "hard", ROCKET_DAMAGE * rocketDamageMul, ROCKET_DAMAGE_MIN * rocketDamageMul)) {
             if (!unlimitedRockets) rocketAmmo--;
             rocketFireCooldown = ROCKET_FIRE_INTERVAL;
             flashes.flash(_muzzle);
