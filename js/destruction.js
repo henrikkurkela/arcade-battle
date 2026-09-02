@@ -809,6 +809,65 @@ class Destruction {
     this.rings.length = 0;
   }
 
+  /** Precompile the GPU shaders the special effects need so the first real
+   *  explosion doesn't stall on shader compilation. The big cost is the point
+   *  light: the first time a light flash is visible, the scene's point-light
+   *  count goes 0->1 and every lit material recompiles. We make one light and
+   *  the pooled effect objects visible, ask the renderer to compile the scene
+   *  now (at startup), then restore. Call once after the world is built. */
+  prewarm(renderer, camera) {
+    const restore = [];
+    // Pooled assemblies + fireball sprites: visible so their materials compile
+    // (the sprite uses an additive-blending program not used elsewhere).
+    for (const e of this.turrets) {
+      e.group.visible = true;
+      restore.push(() => (e.group.visible = false));
+    }
+    for (const e of this.wings) {
+      e.group.visible = true;
+      restore.push(() => (e.group.visible = false));
+    }
+    for (const e of this.bodies) {
+      e.group.visible = true;
+      restore.push(() => (e.group.visible = false));
+    }
+    for (const e of this.fireballs) {
+      e.sprite.visible = true;
+      e.mat.opacity = 1;
+      restore.push(() => {
+        e.sprite.visible = false;
+        e.mat.opacity = 0;
+      });
+    }
+    // One point light active: compiles the lit shaders with one point light
+    // (the variant used while a light flash is up).
+    const light = this.lights[0];
+    light.light.visible = true;
+    light.light.intensity = LIGHT_INTENSITY;
+    restore.push(() => {
+      light.light.visible = false;
+      light.light.intensity = 0;
+    });
+    // A throwaway dust ring so the shared PointsMaterial program compiles too
+    // (the same program the smoke bursts use). Keep the material referenced so
+    // its program stays in the renderer's cache (don't dispose it).
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute(
+      "position", new THREE.BufferAttribute(new Float32Array(DUST_RING_POINTS * 3), 3)
+    );
+    const mat = new THREE.PointsMaterial({
+      color: 0x8a7a5a, size: 1.6, transparent: true, opacity: 0.85, depthWrite: false,
+    });
+    const points = new THREE.Points(geo, mat);
+    points.visible = true;
+    this.scene.add(points);
+    this.scene.updateMatrixWorld(true);
+    renderer.compile(this.scene, camera);
+    this.scene.remove(points);
+    geo.dispose();
+    this._prewarmMat = mat; // hold a reference: keep the program cached
+  }
+
   // --- Pool helper -----------------------------------------------------------
 
   /** Find a free entry in `list` (index stored under `idx`), where `isBusy(e)`

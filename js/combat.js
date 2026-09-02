@@ -27,13 +27,17 @@ class Tracers {
     this._nextFree = 0;
     const geo = new THREE.BoxGeometry(0.12, 0.12, 2.4);
     const mat = new THREE.MeshBasicMaterial({ color: 0xffe066 });
+    // One instanced mesh for the whole pool: ~1024 individual draw calls become
+    // one. Inactive slots are zero-scale (degenerate, culled by the rasterizer).
+    this.im = new THREE.InstancedMesh(geo, mat, poolSize);
+    this.im.instanceMatrix.setUsage(THREE.DynamicDrawUsage); // updated every frame
+    this.im.castShadow = false;
+    this.im.frustumCulled = false; // instances span the whole map
+    const _zero = new THREE.Matrix4().makeScale(0, 0, 0);
     for (let i = 0; i < poolSize; i++) {
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.visible = false;
-      mesh.castShadow = false;
-      scene.add(mesh);
+      this.im.setMatrixAt(i, _zero);
       this.pool.push({
-        mesh,
+        idx: i,
         active: false,
         pos: new THREE.Vector3(),
         vel: new THREE.Vector3(),
@@ -45,12 +49,33 @@ class Tracers {
         life: 0,
       });
     }
+    this.im.count = poolSize;
+    this.im.instanceMatrix.needsUpdate = true;
+    scene.add(this.im);
     // Set by main.js: (owner, victim) => void, called on a lethal hit.
     this.onKill = null;
     // Set by main.js: (owner, victim, dealt) => void, called on every hit.
     this.onDamage = null;
     // Set by main.js: (gun) => void, called when a tracer knocks out an AA gun.
     this.onAADisabled = null;
+    // Temp objects for instance-matrix composition (no per-shot allocation).
+    this._m = new THREE.Matrix4();
+    this._q = new THREE.Quaternion();
+    this._zAxis = new THREE.Vector3(0, 0, 1);
+    this._scale = new THREE.Vector3(1, 1, 1);
+    this._zero = _zero;
+  }
+
+  /** Position + orient instance `e` (box long axis along e.dir). */
+  _place(e) {
+    this._q.setFromUnitVectors(this._zAxis, e.dir);
+    this._m.compose(e.pos, this._q, this._scale);
+    this.im.setMatrixAt(e.idx, this._m);
+  }
+
+  /** Hide instance `e` (zero-scale). */
+  _hide(e) {
+    this.im.setMatrixAt(e.idx, this._zero);
   }
 
   /** Activate one pooled tracer. Drops the shot if the pool is full.
@@ -70,9 +95,8 @@ class Tracers {
       e.damage = damage;
       e.kind = kind;
       e.life = MG_BULLET_LIFE;
-      e.mesh.visible = true;
-      e.mesh.position.copy(e.pos);
-      e.mesh.lookAt(e.pos.x + e.dir.x, e.pos.y + e.dir.y, e.pos.z + e.dir.z);
+      this._place(e);
+      this.im.instanceMatrix.needsUpdate = true;
       return;
     }
   }
@@ -82,13 +106,15 @@ class Tracers {
    *  target-agnostic: any tracer can hit any unit (and any AA gun) except
    *  same-team (friendly fire). Which units an AI *aims at* is the AI's choice. */
   update(dt, units, terrain, aaGuns) {
+    let changed = false;
     for (const e of this.pool) {
       if (!e.active) continue;
       e.pos.addScaledVector(e.vel, dt);
       e.life -= dt;
       if (e.life <= 0 || e.pos.y < terrain.heightAt(e.pos.x, e.pos.z)) {
         e.active = false;
-        e.mesh.visible = false;
+        this._hide(e);
+        changed = true;
         continue;
       }
       let hit = false;
@@ -104,7 +130,8 @@ class Tracers {
       }
       if (hit) {
         e.active = false;
-        e.mesh.visible = false;
+        this._hide(e);
+        changed = true;
         continue;
       }
       // AA guns: a tracer within the structure's stand-off chips the gun.
@@ -115,22 +142,26 @@ class Tracers {
           if (e.pos.distanceTo(g.position) < AA_HIT_RADIUS) {
             if (g.takeDamage(e.damage, e.kind) && this.onAADisabled) this.onAADisabled(g);
             e.active = false;
-            e.mesh.visible = false;
+            this._hide(e);
+            changed = true;
             break;
           }
         }
       }
       if (!e.active) continue;
-      e.mesh.position.copy(e.pos);
+      this._place(e);
+      changed = true;
     }
+    if (changed) this.im.instanceMatrix.needsUpdate = true;
   }
 
   /** Deactivate everything (used on restart). */
   clear() {
     for (const e of this.pool) {
       e.active = false;
-      e.mesh.visible = false;
+      this.im.setMatrixAt(e.idx, this._zero);
     }
+    this.im.instanceMatrix.needsUpdate = true;
   }
 }
 

@@ -2393,6 +2393,91 @@ const Game = (() => {
       fpsMeter.calls + " calls · " + tris + " tris · " + units + " units · " + fx + " fx";
   }
 
+  // --- Performance log ---------------------------------------------------------
+  // Throttled console.log of per-frame timings, broken down by game phase, plus
+  // the renderer's draw-call / triangle counts and the scene load. One summary
+  // line per second; per-phase times are averaged per frame. The phase
+  // accumulators are filled in by the main loop below. Set enabled = false to
+  // silence it.
+  const perf = {
+    enabled: true,
+    windowStart: 0,
+    lastNow: 0,
+    frames: 0,
+    worst: 0, // worst frame interval in the current window (ms)
+    sum: { logic: 0, render: 0 }, // accumulated ms (pre-render JS, render call)
+    calls: 0,
+    tris: 0,
+    phase: {
+      player: 0, ai: 0, rifle: 0, plane: 0, aa: 0, collide: 0,
+      weapons: 0, env: 0, misc: 0, audio: 0, fx: 0, hud: 0,
+    },
+  };
+
+  /** Accumulate this frame's timings (t0 = frame start, t1 = pre-render,
+   *  t2 = post-render) and log a one-line summary ~1x/s. */
+  function perfTick(t0, t1, t2) {
+    if (!perf.enabled) return;
+    if (perf.frames === 0) {
+      perf.windowStart = t0;
+      perf.lastNow = t0;
+    } else {
+      const interval = t0 - perf.lastNow;
+      if (interval > 0 && interval > perf.worst) perf.worst = interval;
+    }
+    perf.lastNow = t0;
+    perf.sum.logic += t1 - t0;
+    perf.sum.render += t2 - t1;
+    perf.frames++;
+    perf.calls = renderer.info.render.calls;
+    perf.tris = renderer.info.render.triangles;
+    const elapsed = t2 - perf.windowStart;
+    if (elapsed < 1000) return;
+
+    const n = perf.frames;
+    const fps = Math.round((n * 1000) / elapsed);
+    const avgFrame = elapsed / n;
+    const logic = perf.sum.logic / n;
+    const render = perf.sum.render / n;
+    // Scene load: active units and pooled effects in flight.
+    let units = 0;
+    if (player && player.alive) units++;
+    for (const s of fleet) if (s.tank.alive) units++;
+    for (const s of rifleFleet) if (s.unit.alive) units++;
+    for (const s of planeFleet) if (s.plane.alive) units++;
+    if (aaGuns) units += aaGuns.guns.length;
+    let fx = 0;
+    if (tracers) fx += countActive(tracers.pool);
+    if (shells) fx += countActive(shells.pool);
+    if (projectiles) fx += countActive(projectiles.pool);
+    if (rockets) fx += countActive(rockets.pool);
+    if (debris)
+      fx +=
+        countActive(debris.pool) +
+        countActive(debris.foliage) +
+        countActive(debris.body) +
+        countActive(debris.plane);
+    if (flashes) fx += countActive(flashes.pool, true);
+    fx += smokes.length;
+    const p = perf.phase;
+    const f = (v) => (v / n).toFixed(1);
+    const tris = perf.tris >= 1000 ? (perf.tris / 1000).toFixed(0) + "k" : String(perf.tris);
+    console.log(
+      "[perf] " + fps + "fps | frame " + avgFrame.toFixed(1) + "ms (worst " + perf.worst.toFixed(1) + ") | " +
+        "cpu " + logic.toFixed(1) + " gpu " + render.toFixed(1) + " | " +
+        perf.calls + " calls " + tris + " tris | " + units + "u " + fx + "fx | " +
+        "player " + f(p.player) + " ai " + f(p.ai) + " rifle " + f(p.rifle) + " plane " + f(p.plane) +
+        " aa " + f(p.aa) + " collide " + f(p.collide) + " weapons " + f(p.weapons) +
+        " env " + f(p.env) + " misc " + f(p.misc) + " audio " + f(p.audio) + " fx " + f(p.fx) + " hud " + f(p.hud)
+    );
+    // Reset accumulators for the next window.
+    perf.frames = 0;
+    perf.worst = 0;
+    perf.sum.logic = 0;
+    perf.sum.render = 0;
+    for (const k in p) p[k] = 0;
+  }
+
   // --- Main loop ---------------------------------------------------------------
   let last = performance.now();
 
@@ -2401,6 +2486,7 @@ const Game = (() => {
     const dt = Math.min((now - last) / 1000, 0.05);
     last = now;
     const t0 = now;
+    let _t = performance.now(); // performance-log phase timer
 
     if (state === "playing") {
       // All alive tanks (active player tank + fleet): the weapon pools and the
@@ -2521,6 +2607,7 @@ const Game = (() => {
         if (plane.alive) checkPlaneRam();
         if (plane.alive) checkPlaneCollisions();
       }
+      perf.phase.player += performance.now() - _t; _t = performance.now();
 
       // AI fleet: AI -> physics -> firing -> respawn (M4).
       for (const slot of fleet) {
@@ -2585,6 +2672,7 @@ const Game = (() => {
           }
         }
       }
+      perf.phase.ai += performance.now() - _t; _t = performance.now();
 
       // Rifleman squad: AI -> physics -> burst fire (M7).
       for (const slot of rifleFleet) {
@@ -2617,6 +2705,7 @@ const Game = (() => {
           EngineAudio.mgFire(r.position.distanceTo(player.position));
         }
       }
+      perf.phase.rifle += performance.now() - _t; _t = performance.now();
 
       // CPU plane fleet: AI -> physics -> firing -> terrain crash -> respawn (M8).
       for (const slot of planeFleet) {
@@ -2680,6 +2769,7 @@ const Game = (() => {
           destroyCpuPlane(slot, null);
         }
       }
+      perf.phase.plane += performance.now() - _t; _t = performance.now();
 
       // AA guns: engage any in-range plane, launch tracers (and rare rockets).
       const aaShots = aaGuns.update(dt, ctx.planes);
@@ -2704,12 +2794,14 @@ const Game = (() => {
           });
         }
       }
+      perf.phase.aa += performance.now() - _t; _t = performance.now();
 
       // Tank vs tank: push apart + speed-based damage to both (M5).
       collideTanks(ctx.tanks);
 
       // Tank vs rifleman: a moving tank runs over the infantry (M7).
       runOverRiflemen(ctx.tanks, aliveRiflemen);
+      perf.phase.collide += performance.now() - _t; _t = performance.now();
 
       if (state === "playing") {
         // Tracers (tank MG + rifleman): integrate, collide, damage.
@@ -2746,6 +2838,7 @@ const Game = (() => {
           if (!tank.alive) destroyPlayer(destroyReason || "You were destroyed.");
         }
       }
+      perf.phase.weapons += performance.now() - _t; _t = performance.now();
 
       if (state === "playing") {
         distance += (vehicle === VEHICLE_PLANE ? plane.speed : Math.abs(tank.speed)) * dt;
@@ -2754,6 +2847,7 @@ const Game = (() => {
         terrain.update(focus);
         scenery.update(dt, focus);
       }
+      perf.phase.env += performance.now() - _t; _t = performance.now();
     } else if (state === "destroyed") {
       // Frozen: keep the last camera, let the world stay alive, and show the
       // overlay once the impact has registered.
@@ -2798,6 +2892,7 @@ const Game = (() => {
     }
 
     // Sun (and its shadow camera) follows the focus point.
+    _t = performance.now(); // performance-log: start the tail (runs in all states)
     sun.position.copy(focus).add(_sunOffset);
     sun.target.position.copy(focus);
 
@@ -2814,6 +2909,7 @@ const Game = (() => {
 
     // AA searchlights: purely visual, fade in/out with the night mix.
     aaGuns.updateBeams(dt, nightMix);
+    perf.phase.misc += performance.now() - _t; _t = performance.now();
 
     EngineAudio.update(
       dt,
@@ -2826,6 +2922,7 @@ const Game = (() => {
         : 0
     );
     Music.update(dt, state);
+    perf.phase.audio += performance.now() - _t; _t = performance.now();
 
     // Effects + HUD (M6: visible while playing and after destruction).
     hudCombat.classList.toggle("hidden", !(state === "playing" || state === "destroyed"));
@@ -2833,6 +2930,7 @@ const Game = (() => {
     debris.update(dt, terrain);
     destruction.update(dt);
     flashes.update(dt);
+    perf.phase.fx += performance.now() - _t; _t = performance.now();
     updateHud();
     updateCrosshair();
     // Garage hint: visible while the player tank is inside the pad (M5).
@@ -2841,6 +2939,7 @@ const Game = (() => {
     // Always reconcile with the timer (a run reset zeroes it without hiding).
     landingHintTimer = Math.max(0, landingHintTimer - dt);
     landingHint.classList.toggle("hidden", landingHintTimer <= 0);
+    perf.phase.hud += performance.now() - _t; _t = performance.now();
 
     // Keep the sky dome centered on the camera; otherwise its far side gets
     // clipped by the far plane once the camera moves farther than
@@ -2850,6 +2949,7 @@ const Game = (() => {
     renderer.render(scene, camera);
     const t2 = performance.now();
     measureFps(t0, t1, t2);
+    perfTick(t0, t1, t2);
   }
 
   // --- Resize ------------------------------------------------------------------
@@ -2867,6 +2967,14 @@ const Game = (() => {
   resize();
   buildCompassTape();
   buildWorld();
+  // Precompile the special-effect shaders (point-light variant, fireball sprite,
+  // dust-ring points) so the first real explosion doesn't stall on GPU shader
+  // compilation. Runs before the first rendered frame.
+  destruction.prewarm(renderer, camera);
+  // The prewarm's compile pass issued real draw calls; render the ready state
+  // once so the canvas is left in the correct state (no flash of the effect
+  // objects) before the first animation frame paints.
+  renderer.render(scene, camera);
   timeToggle.textContent = nightMode ? "NIGHT" : "DAY";
   applyEnvironment(nightMix);
   showOverlay("ARCADE BATTLE", "", "Drive");

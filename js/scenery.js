@@ -55,7 +55,12 @@ function applyEdgeFade(mat) {
       )
       .replace(
         "#include <project_vertex>",
-        "#include <project_vertex>\n vFadeDist = distance((modelMatrix * vec4(transformed, 1.0)).xz, uFadeCenter.xz);"
+        "#include <project_vertex>\n" +
+          " vec3 _fadeWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;\n" +
+          " #ifdef USE_INSTANCING\n" +
+          " _fadeWorld = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;\n" +
+          " #endif\n" +
+          " vFadeDist = distance(_fadeWorld.xz, uFadeCenter.xz);"
       );
     shader.fragmentShader = shader.fragmentShader
       .replace(
@@ -78,6 +83,7 @@ class Scenery {
   add(item) {
     if (item.mesh) this.scene.add(item.mesh);
     this.items.push(item);
+    if (item.onAdd) item.onAdd();
     return item;
   }
 
@@ -88,6 +94,7 @@ class Scenery {
     const i = this.items.indexOf(item);
     if (i === -1) return;
     this.items.splice(i, 1);
+    if (item.onRemove) item.onRemove();
     if (item.mesh) this.scene.remove(item.mesh);
   }
 
@@ -221,7 +228,9 @@ class Trees {
     applyEdgeFade(pineCanopyMat);
     applyEdgeFade(broadCanopyMat);
 
-    const half = TREE_REGION / 2;
+    // Place every tree first (deterministic from the seed), collecting the data
+    // needed to build the instanced meshes.
+    const trees = [];
     let placed = 0;
     let guard = 0;
     while (placed < TREE_COUNT && guard < TREE_COUNT * 20) {
@@ -239,35 +248,93 @@ class Trees {
       // Skip near-vertical slopes (same finite-difference method as Terrain).
       const e = 2;
       const dx = (terrain.heightAt(x + e, z) - terrain.heightAt(x - e, z)) / (2 * e);
-      const dz = (terrain.heightAt(x, z + e) - terrain.heightAt(x, z - e)) / (2 * e);
+      const dz = (terrain.heightAt(x, z + e) - terrain.heightAt(x - e, z)) / (2 * e);
       if (Math.sqrt(dx * dx + dz * dz) > TREE_MAX_SLOPE) continue;
 
       const groundY = terrain.heightAt(x, z);
       const isPine = rand() < 0.5;
       const s = 0.7 + rand() * 0.7;
       const treeHeight = isPine ? 8.0 : 7.2;
+      trees.push({ x, z, groundY, s, isPine, treeHeight });
+      placed++;
+    }
 
-      const g = new THREE.Group();
-      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-      trunk.position.y = 1.2; // sunk 0.75 m so the base reaches the ground on steep slopes
-      const canopy = new THREE.Mesh(
-        isPine ? pineCanopyGeo : broadCanopyGeo,
-        isPine ? pineCanopyMat : broadCanopyMat
-      );
-      canopy.position.y = isPine ? 5.5 : 4.8;
-      g.add(trunk, canopy);
-      g.scale.setScalar(s);
-      g.position.set(x, groundY, z);
-      g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+    // Three instanced meshes, one per shared geometry (trunk / pine canopy /
+    // broadleaf canopy). This collapses the ~2 draw calls per tree into three
+    // total. Instances span the whole map, so per-object frustum culling does
+    // not apply (frustumCulled = false).
+    const trunkIM = new THREE.InstancedMesh(trunkGeo, trunkMat, trees.length);
+    const pineIM = new THREE.InstancedMesh(pineCanopyGeo, pineCanopyMat, trees.length);
+    const broadIM = new THREE.InstancedMesh(broadCanopyGeo, broadCanopyMat, trees.length);
+    for (const im of [trunkIM, pineIM, broadIM]) {
+      im.castShadow = true;
+      im.frustumCulled = false;
+    }
 
+    // A tree instance matrix: scale by s, place at (x, groundY + yOffset*s, z).
+    const _m = new THREE.Matrix4();
+    const setTree = (im, idx, t, yOffset) => {
+      _m.makeScale(t.s, t.s, t.s);
+      _m.setPosition(t.x, t.groundY + yOffset * t.s, t.z);
+      im.setMatrixAt(idx, _m);
+    };
+    const _zero = new THREE.Matrix4().makeScale(0, 0, 0);
+
+    // Assign instances: one trunk per tree; canopies packed per type.
+    let pineIdx = 0;
+    let broadIdx = 0;
+    for (let i = 0; i < trees.length; i++) {
+      const t = trees[i];
+      t.trunkIdx = i;
+      setTree(trunkIM, i, t, 1.2); // trunk sunk 0.75 m so the base reaches the ground
+      if (t.isPine) {
+        setTree(pineIM, pineIdx, t, 5.5);
+        t.canopyIM = pineIM;
+        t.canopyIdx = pineIdx;
+        t.canopyY = 5.5;
+        pineIdx++;
+      } else {
+        setTree(broadIM, broadIdx, t, 4.8);
+        t.canopyIM = broadIM;
+        t.canopyIdx = broadIdx;
+        t.canopyY = 4.8;
+        broadIdx++;
+      }
+    }
+    trunkIM.count = trees.length;
+    pineIM.count = pineIdx;
+    broadIM.count = broadIdx;
+    trunkIM.instanceMatrix.needsUpdate = true;
+    pineIM.instanceMatrix.needsUpdate = true;
+    broadIM.instanceMatrix.needsUpdate = true;
+
+    scenery.scene.add(trunkIM, pineIM, broadIM);
+
+    // Register each tree as a scenery item (collidable + fellable). `mesh` is a
+    // lightweight position holder so the foliage-burst reference (item.mesh.position)
+    // keeps working; felling/restoring hides/shows the tree's instances.
+    for (const t of trees) {
+      const holder = new THREE.Object3D();
+      holder.position.set(t.x, t.groundY, t.z);
       scenery.add({
-        mesh: g,
+        mesh: holder,
         kind: "tree",
         collidesWith: (pos, r) =>
-          Math.hypot(pos.x - x, pos.z - z) < r + 0.4 * s &&
-          pos.y < groundY + treeHeight * s,
+          Math.hypot(pos.x - t.x, pos.z - t.z) < r + 0.4 * t.s &&
+          pos.y < t.groundY + t.treeHeight * t.s,
+        onRemove: () => {
+          trunkIM.setMatrixAt(t.trunkIdx, _zero);
+          t.canopyIM.setMatrixAt(t.canopyIdx, _zero);
+          trunkIM.instanceMatrix.needsUpdate = true;
+          t.canopyIM.instanceMatrix.needsUpdate = true;
+        },
+        onAdd: () => {
+          setTree(trunkIM, t.trunkIdx, t, 1.2);
+          setTree(t.canopyIM, t.canopyIdx, t, t.canopyY);
+          trunkIM.instanceMatrix.needsUpdate = true;
+          t.canopyIM.instanceMatrix.needsUpdate = true;
+        },
       });
-      placed++;
     }
   }
 }
