@@ -26,6 +26,8 @@
             <div class="hud-row" id="hud-score-row">SCORE <span class="v" id="hud-score">0</span></div>
             <div class="hud-row" id="hud-shell-row">SHELL <span class="v" id="hud-shell">READY</span></div>
             <div class="hud-row hidden" id="hud-rockets-row">ROCKETS <span class="v" id="hud-rockets">6</span></div>
+            <div class="hud-row hidden" id="hud-sniper-row">SNIPER <span class="v" id="hud-sniper">READY</span></div>
+            <div class="hud-row hidden" id="hud-grenades-row">GRENADES <span class="v" id="hud-grenades">4</span></div>
           </div>
           <div class="hud-box right" id="tank-hints">
             <div>W / &uarr; throttle &nbsp;&middot;&nbsp; S / &darr; reverse</div>
@@ -41,9 +43,16 @@
             <div id="plane-weapons-hint">LEFT CLICK / SPACE fire &nbsp;&middot;&nbsp; RIGHT CLICK / X rockets</div>
             <div><span id="plane-rocket-hint">100 dmg = +1 rocket &nbsp;&middot;&nbsp; </span>P pause &nbsp;&middot;&nbsp; R restart &nbsp;&middot;&nbsp; M mute &nbsp;&middot;&nbsp; H fps &nbsp;&middot;&nbsp; 1 / 2 camera</div>
           </div>
+          <div class="hud-box right hidden" id="rifleman-hints">
+            <div>W / &uarr; walk &nbsp;&middot;&nbsp; S / &darr; back &nbsp;&middot;&nbsp; SHIFT sprint</div>
+            <div>A / &larr; , D / &rarr; turn &nbsp;&middot;&nbsp; MOUSE aim (body + rifle)</div>
+            <div>LEFT CLICK / SPACE sniper &nbsp;&middot;&nbsp; RIGHT CLICK / X grenade</div>
+            <div>P pause &nbsp;&middot;&nbsp; R restart &nbsp;&middot;&nbsp; M mute &nbsp;&middot;&nbsp; H fps &nbsp;&middot;&nbsp; 1 / 2 camera (shoulder / scope)</div>
+          </div>
           <div id="crosshair"></div>
           <div id="gun-heat"><div id="gun-heat-fill"></div></div>
           <div id="stall" class="hidden">STALL &mdash; GAIN SPEED</div>
+          <div id="spotted" class="hidden">SPOTTED &mdash; <span id="spotted-time">10</span>s</div>
           <div id="overheat">OVERHEAT &mdash; WAIT FOR COOLING</div>
           <div id="garage-hint">GARAGE &mdash; REPAIRING</div>
           <div id="landing-hint" class="hidden">LANDED &mdash; HP RESTORED</div>

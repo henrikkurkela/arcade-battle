@@ -177,6 +177,15 @@ const Game = (() => {
   // --- Vehicle selection (M9) --------------------------------------------------
   const VEHICLE_TANK = "tank";
   const VEHICLE_PLANE = "plane";
+  const VEHICLE_RIFLEMAN = "rifleman";
+  // Rifleman weapons + stealth (the player is the third vehicle, the "hunter").
+  // The hitscan sniper / grenade throw logic lands in phase 3; the reveal
+  // trigger points + SPOTTED warning land in phase 2. Phase 1 only needs the
+  // state + the title-screen slot, so these constants seed that state now.
+  const SNIPER_RELOAD = 3; // s to reload the one round in the chamber
+  const GRENADE_START = 4; // grenades held at the start of a run
+  const GRENADE_MAX = 6; // grenade cap (earned back by dealing damage)
+  const PLAYER_REVEAL_TIME = 10; // s the player is revealed after firing/throwing
   // Plane player weapons (ported from the Arcade Plane game). SOFT damage: a
   // tank's TANK_SOFT_ARMOR (10) leaves 3 per hit (30/10); vs a plane's armor
   // (3) it deals 10, keeping the player's arcade edge over the CPU's 7.
@@ -238,6 +247,10 @@ const Game = (() => {
       { id: "dogfighter", name: "DOGFIGHTER", desc: "No rockets, cannon overheats 2x slower; more agile and faster.",
         cannon: true, rockets: false, unlimitedRockets: false, heatPerShot: 0.5,
         agility: 1.1, speed: 1.1 },
+    ],
+    rifleman: [
+      { id: "standard", name: "STANDARD", desc: "A hitscan sniper and a handful of grenades. Stay on your toes.",
+        ballisticComputer: true },
     ],
   };
 
@@ -314,9 +327,15 @@ const Game = (() => {
   const hudShellRow = document.getElementById("hud-shell-row");
   const hudRocketsRow = document.getElementById("hud-rockets-row");
   const hudRockets = document.getElementById("hud-rockets");
+  const hudSniperRow = document.getElementById("hud-sniper-row");
+  const hudSniper = document.getElementById("hud-sniper");
+  const hudGrenadesRow = document.getElementById("hud-grenades-row");
+  const hudGrenades = document.getElementById("hud-grenades");
   const tankHints = document.getElementById("tank-hints");
   const planeHints = document.getElementById("plane-hints");
+  const riflemanHints = document.getElementById("rifleman-hints");
   const stall = document.getElementById("stall");
+  const spotted = document.getElementById("spotted");
   const landingHint = document.getElementById("landing-hint");
   const zeroedHint = document.getElementById("zeroed-hint");
   const tankFireHint = document.getElementById("tank-fire-hint");
@@ -510,15 +529,20 @@ const Game = (() => {
   let chaseCam = null;
   let playerController = null;
   let ctx = null;
-  // Player plane + chase camera + controller (M9). Both player units are built
-  // in buildWorld(); `player` is the active one (the other is hidden/inert).
+  // Player plane + chase camera + controller (M9). All three player units are
+  // built in buildWorld(); `player` is the active one (the others hidden/inert).
   let plane = null;
   let planeCam = null;
   let planeController = null;
-  let player = null; // the active player unit (tank or plane)
+  // Player rifleman + camera + controller (the third vehicle, the "hunter").
+  let rifleman = null;
+  let riflemanCam = null;
+  let riflemanController = null;
+  let player = null; // the active player unit (tank, plane, or rifleman)
   let vehicle = VEHICLE_TANK; // selected vehicle (persisted)
   let tankLoadout = "standard"; // selected tank loadout (persisted)
   let planeLoadout = "standard"; // selected plane loadout (persisted)
+  let riflemanLoadout = "standard"; // selected rifleman loadout (persisted)
   let difficulty = "normal"; // selected difficulty tier (persisted)
   // Effective loadout values for the ACTIVE vehicle, set by applyLoadout().
   // Only the active vehicle's fire sites read these.
@@ -539,6 +563,12 @@ const Game = (() => {
   let rocketFireCooldown = 0;
   let stallWarned = false;
   let landingHintTimer = 0;
+  // Rifleman combat + stealth state (the third vehicle). The sniper reload and
+  // grenade ammo are driven by the weapons in phase 3; the reveal timer is the
+  // "ghost" state (firing/throwing reveals the player for PLAYER_REVEAL_TIME).
+  let sniperReload = 0; // s until the sniper is ready again (0 = READY)
+  let grenadeAmmo = GRENADE_START;
+  let playerRevealTimer = 0; // s the player is revealed (0 = a pure ghost)
 
   // --- Combat (M3) -----------------------------------------------------------
   let tracers = null;
@@ -627,10 +657,15 @@ const Game = (() => {
     plane = new Plane(scene);
     plane.team = "player";
     plane.callsign = "YOU";
+    rifleman = new Rifleman(scene, { uniform: RIFLEMAN_UNIFORMS[0] });
+    rifleman.team = "player";
+    rifleman.callsign = "YOU";
     chaseCam = new ChaseCamera(camera);
     planeCam = new PlaneChaseCamera(camera);
+    riflemanCam = new RiflemanChaseCamera(camera);
     playerController = new PlayerController();
     planeController = new PlanePlayerController();
+    riflemanController = new RiflemanPlayerController();
     ctx = { player: tank, tanks: [tank], riflemen: [], planes: [], units: [tank], terrain };
     tracers = new Tracers(scene);
     shells = new Shells(scene);
@@ -676,8 +711,13 @@ const Game = (() => {
   /** A unit was destroyed by a weapon hit: dispatch to the right handler. */
   function handleKill(owner, victim) {
     if (victim === player) {
-      // "Shot down" only fits the plane; a tank is "destroyed".
-      const verb = vehicle === VEHICLE_PLANE ? "shot down" : "destroyed";
+      // "Shot down" fits the plane, "killed" the rifleman; a tank is "destroyed".
+      const verb =
+        vehicle === VEHICLE_PLANE
+          ? "shot down"
+          : vehicle === VEHICLE_RIFLEMAN
+            ? "killed"
+            : "destroyed";
       destroyReason = "You were " + verb + " by " + shooterName(owner) + ".";
       return; // death itself is handled via !player.alive below
     }
@@ -803,6 +843,9 @@ const Game = (() => {
     rocketFireCooldown = 0;
     stallWarned = false;
     landingHintTimer = 0;
+    sniperReload = 0;
+    grenadeAmmo = GRENADE_START;
+    playerRevealTimer = 0;
     kills = 0;
     damageDealt = 0;
     rifleKills = 0;
@@ -844,41 +887,72 @@ const Game = (() => {
     resetRunState();
   }
 
-  /** Show the selected vehicle and hide the other (M9). The hidden unit stays
-   *  inert at its spawn point; the active one is spawned fresh. */
+  /** Place the player rifleman at the garage pad facing the flattest ground,
+   *  snap the rifleman camera, and reset the run state (the third vehicle). */
+  function spawnPlayerRifleman() {
+    rifleman.reset(0, 0, spawnYaw(), terrain);
+    riflemanCam.snap(rifleman);
+    focus.copy(rifleman.position);
+    resetRunState();
+  }
+
+  /** Show the selected vehicle and hide the others. The hidden units stay
+   *  inert at their spawn points; the active one is spawned fresh. */
   function applyVehicle() {
     const isPlane = vehicle === VEHICLE_PLANE;
-    tank.group.visible = !isPlane;
+    const isRifle = vehicle === VEHICLE_RIFLEMAN;
+    tank.group.visible = !isPlane && !isRifle;
     plane.group.visible = isPlane;
-    player = isPlane ? plane : tank;
+    rifleman.group.visible = isRifle;
+    player = isPlane ? plane : isRifle ? rifleman : tank;
     if (isPlane) spawnPlayerPlane();
+    else if (isRifle) spawnPlayerRifleman();
     else spawnPlayerTank();
     EngineAudio.setEngineMode(isPlane ? "prop" : "diesel");
+    // Per-vehicle HUD rows: altitude/throttle/rockets (plane), shell (tank),
+    // sniper/grenades (rifleman).
     hudAltRow.classList.toggle("hidden", !isPlane);
     hudThrottleRow.classList.toggle("hidden", !isPlane);
     hudRocketsRow.classList.toggle("hidden", !isPlane);
-    hudShellRow.classList.toggle("hidden", isPlane);
-    tankHints.classList.toggle("hidden", isPlane);
+    hudShellRow.classList.toggle("hidden", vehicle !== VEHICLE_TANK);
+    hudSniperRow.classList.toggle("hidden", !isRifle);
+    hudGrenadesRow.classList.toggle("hidden", !isRifle);
+    // Per-vehicle control hints.
+    tankHints.classList.toggle("hidden", vehicle !== VEHICLE_TANK);
     planeHints.classList.toggle("hidden", !isPlane);
+    riflemanHints.classList.toggle("hidden", !isRifle);
     stall.classList.add("hidden");
+    spotted.classList.add("hidden");
     landingHint.classList.add("hidden");
-    vehicleToggle.textContent = isPlane ? "PLANE" : "TANK";
+    vehicleToggle.textContent = isPlane ? "PLANE" : isRifle ? "RIFLEMAN" : "TANK";
     updateTitleOverlay();
     applyLoadout(); // re-apply the (new) vehicle's loadout
   }
 
   /** Set the title-screen text and start button for the selected vehicle. */
   function updateTitleOverlay() {
-    const isPlane = vehicle === VEHICLE_PLANE;
+    let blurb, btn;
+    if (vehicle === VEHICLE_PLANE) {
+      blurb =
+        "You&rsquo;re a lone fighter over hostile territory.<br />" +
+        "Dogfight the enemy fleet, dodge the AA ring, hold your speed.<br />" +
+        "Land on the garage pad to restore your HP.";
+      btn = "Fly";
+    } else if (vehicle === VEHICLE_RIFLEMAN) {
+      blurb =
+        "You&rsquo;re a lone rifleman &mdash; the hunter, and always the hunted.<br />" +
+        "Stay on your toes: you&rsquo;re invisible until you fire, then hunted for 10s.<br />" +
+        "Let the CPUs fight each other, and harvest the wounded.";
+      btn = "Move";
+    } else {
+      blurb =
+        "You&rsquo;re a lone tank in a free-for-all.<br />" +
+        "Gun down the enemy fleet, arc your shells, retreat to the garage to repair.";
+      btn = "Drive";
+    }
     overlayText.innerHTML =
-      (isPlane
-        ? "You&rsquo;re a lone fighter over hostile territory.<br />" +
-          "Dogfight the enemy fleet, dodge the AA ring, hold your speed.<br />" +
-          "Land on the garage pad to restore your HP."
-        : "You&rsquo;re a lone tank in a free-for-all.<br />" +
-          "Gun down the enemy fleet, arc your shells, retreat to the garage to repair.") +
-      (bestScore > 0 ? "<br /><br />BEST SCORE: " + bestScore : "");
-    overlayBtn.textContent = isPlane ? "Fly" : "Drive";
+      blurb + (bestScore > 0 ? "<br /><br />BEST SCORE: " + bestScore : "");
+    overlayBtn.textContent = btn;
   }
 
   /** Toggle the selected vehicle from the title screen (M9). */
@@ -893,7 +967,12 @@ const Game = (() => {
   /** The loadout object for the active vehicle (falls back to the first). */
   function activeLoadout() {
     const list = LOADOUTS[vehicle];
-    const id = vehicle === VEHICLE_TANK ? tankLoadout : planeLoadout;
+    const id =
+      vehicle === VEHICLE_TANK
+        ? tankLoadout
+        : vehicle === VEHICLE_PLANE
+          ? planeLoadout
+          : riflemanLoadout;
     return list.find((l) => l.id === id) || list[0];
   }
 
@@ -923,18 +1002,19 @@ const Game = (() => {
   hudRocketsRow.classList.toggle("hidden", !(vehicle === VEHICLE_PLANE && rocketsEnabled));
   // The tank's control hints reflect the loadout.
   updateTankHints();
-  // The ballistic computer reflects the loadout + the active weapon's physics
-  // (the tank's shell or the plane's rocket).
-  if (ballisticComputer) {
-    if (vehicle === VEHICLE_TANK) {
-      ballistic.configure(SHELL_SPEED, SHELL_GRAVITY, SHELL_LIFE, BLAST_RADIUS, SHELL_FUSE_RADIUS);
+    // The ballistic computer reflects the loadout + the active weapon's physics
+    // (the tank's shell or the plane's rocket). The rifleman's is a hitscan
+    // mode that lands in phase 3, so it stays off here.
+    if (ballisticComputer && vehicle !== VEHICLE_RIFLEMAN) {
+      if (vehicle === VEHICLE_TANK) {
+        ballistic.configure(SHELL_SPEED, SHELL_GRAVITY, SHELL_LIFE, BLAST_RADIUS, SHELL_FUSE_RADIUS);
+      } else {
+        ballistic.configure(ROCKET_SPEED, ROCKET_GRAVITY, ROCKET_LIFE, ROCKET_BLAST_RADIUS, ROCKET_FUSE_RADIUS);
+      }
+      ballistic.setEnabled(true);
     } else {
-      ballistic.configure(ROCKET_SPEED, ROCKET_GRAVITY, ROCKET_LIFE, ROCKET_BLAST_RADIUS, ROCKET_FUSE_RADIUS);
+      ballistic.setEnabled(false);
     }
-    ballistic.setEnabled(true);
-  } else {
-    ballistic.setEnabled(false);
-  }
   updateLoadoutUI();
   updatePlaneHints();
   saveSettings();
@@ -946,7 +1026,8 @@ const Game = (() => {
     const cur = activeLoadout();
     const next = list[(list.indexOf(cur) + 1) % list.length];
     if (vehicle === VEHICLE_TANK) tankLoadout = next.id;
-    else planeLoadout = next.id;
+    else if (vehicle === VEHICLE_PLANE) planeLoadout = next.id;
+    else riflemanLoadout = next.id;
     applyLoadout();
   }
 
@@ -1406,6 +1487,20 @@ const Game = (() => {
       });
       EngineAudio.crash(0);
       planeCam.shake = CAM_SHAKE_DESTROYED;
+    } else if (vehicle === VEHICLE_RIFLEMAN) {
+      rifleman.alive = false;
+      rifleman.group.visible = false;
+      // A rifleman's death is a body: blood splash + tumbling body pieces.
+      _smokePt.copy(rifleman.position);
+      _smokePt.y += 1;
+      spawnSmoke(_smokePt, {
+        count: 30, size: 0.6, color: 0x7a1010, opacity: 0.9, life: 0.9,
+        sx: 0.6, sy: 0.8, sz: 0.6, vh: 3, vyLo: -0.5, vyHi: 2.5,
+        drift: 0, grav: 9.8,
+      });
+      debris.spawnBody(rifleman.position, rifleman.velocity);
+      EngineAudio.crash(0);
+      riflemanCam.shake = CAM_SHAKE_DESTROYED;
     } else {
       tank.alive = false;
       tank.group.visible = false;
@@ -1664,7 +1759,12 @@ const Game = (() => {
     }
     // Small camera shake when the player is hit.
     if (victim === player) {
-      const cam = vehicle === VEHICLE_PLANE ? planeCam : chaseCam;
+      const cam =
+        vehicle === VEHICLE_PLANE
+          ? planeCam
+          : vehicle === VEHICLE_RIFLEMAN
+            ? riflemanCam
+            : chaseCam;
       cam.shake = Math.max(cam.shake, CAM_SHAKE_HIT * dealt);
     }
   }
@@ -1691,7 +1791,12 @@ const Game = (() => {
     }
     if (felled.length) {
       if (t === player) {
-        const cam = vehicle === VEHICLE_PLANE ? planeCam : chaseCam;
+        const cam =
+          vehicle === VEHICLE_PLANE
+            ? planeCam
+            : vehicle === VEHICLE_RIFLEMAN
+              ? riflemanCam
+              : chaseCam;
         cam.shake = Math.max(cam.shake, CAM_SHAKE_FELL);
       }
       EngineAudio.treeThud(t.position.distanceTo(player.position));
@@ -1870,6 +1975,7 @@ const Game = (() => {
           vehicle,
           tankLoadout,
           planeLoadout,
+          riflemanLoadout,
           difficulty,
           cpuCount,
           riflemanCount,
@@ -1919,11 +2025,18 @@ const Game = (() => {
     typeof savedSettings.bestScore === "number"
       ? Math.max(0, Math.round(savedSettings.bestScore))
       : 0;
-  vehicle = savedSettings.vehicle === VEHICLE_PLANE ? VEHICLE_PLANE : VEHICLE_TANK;
+  vehicle =
+    savedSettings.vehicle === VEHICLE_PLANE
+      ? VEHICLE_PLANE
+      : savedSettings.vehicle === VEHICLE_RIFLEMAN
+        ? VEHICLE_RIFLEMAN
+        : VEHICLE_TANK;
   tankLoadout = LOADOUTS.tank.some((l) => l.id === savedSettings.tankLoadout)
     ? savedSettings.tankLoadout : "standard";
   planeLoadout = LOADOUTS.plane.some((l) => l.id === savedSettings.planeLoadout)
     ? savedSettings.planeLoadout : "standard";
+  riflemanLoadout = LOADOUTS.rifleman.some((l) => l.id === savedSettings.riflemanLoadout)
+    ? savedSettings.riflemanLoadout : "standard";
   difficulty =
     savedSettings.difficulty === "easy" || savedSettings.difficulty === "hard"
       ? savedSettings.difficulty : "normal";
@@ -2028,12 +2141,13 @@ const Game = (() => {
     if (!resuming) {
       Music.newFlight(); // fresh random combat track per run
       if (vehicle === VEHICLE_PLANE) spawnPlayerPlane(); // fresh plane over the pad
+      else if (vehicle === VEHICLE_RIFLEMAN) spawnPlayerRifleman(); // fresh rifleman on the pad
       else spawnPlayerTank(); // fresh tank at the spawn point
       respawnFleet(); // fresh fleet at fresh points (M4)
       respawnRifleFleet(); // fresh squad at fresh points (M7)
       respawnPlaneFleet(); // fresh plane fleet at fresh points (M8)
     }
-    // Both vehicles are controlled with a pointer-locked mouse.
+    // All three vehicles are controlled with a pointer-locked mouse.
     Input.lockPointer();
   }
 
@@ -2056,6 +2170,7 @@ const Game = (() => {
     Music.start();
       Music.newFlight();
       if (vehicle === VEHICLE_PLANE) spawnPlayerPlane();
+      else if (vehicle === VEHICLE_RIFLEMAN) spawnPlayerRifleman();
       else spawnPlayerTank();
       respawnFleet();
       respawnRifleFleet();
@@ -2123,10 +2238,12 @@ const Game = (() => {
       saveSettings();
       return;
     }
-    // Camera mode: 1 = chase (3rd person), 2 = hatch (tank) / canopy (plane).
+    // Camera mode: 1 = chase / over-the-shoulder, 2 = hatch (tank) / canopy
+    // (plane) / scope (rifleman).
     if (code === "Digit1" || code === "Digit2") {
       if (vehicle === VEHICLE_TANK) chaseCam.mode = code === "Digit1" ? "chase" : "hatch";
-      else planeCam.mode = code === "Digit1" ? "chase" : "canopy";
+      else if (vehicle === VEHICLE_PLANE) planeCam.mode = code === "Digit1" ? "chase" : "canopy";
+      else riflemanCam.mode = code === "Digit1" ? "shoulder" : "scope";
       return;
     }
     if (code === "Enter" || code === "Space") {
@@ -2141,9 +2258,11 @@ const Game = (() => {
     EngineAudio.start();
     Music.start();
   };
-  vehicleToggle.addEventListener("click", () =>
-    setVehicle(vehicle === VEHICLE_TANK ? VEHICLE_PLANE : VEHICLE_TANK)
-  );
+  vehicleToggle.addEventListener("click", () => {
+    const order = [VEHICLE_TANK, VEHICLE_PLANE, VEHICLE_RIFLEMAN];
+    const next = order[(order.indexOf(vehicle) + 1) % order.length];
+    setVehicle(next);
+  });
   loadoutToggle.addEventListener("click", () => { unlockAudio(); cycleLoadout(); });
   difficultyToggle.addEventListener("click", () => { unlockAudio(); cycleDifficulty(); });
   cpuMinus.addEventListener("click", () => { unlockAudio(); setCpuCount(cpuCount - 1); });
@@ -2210,15 +2329,17 @@ const Game = (() => {
   function updateHud() {
     if (state !== "playing" && state !== "destroyed") return;
     const isPlane = vehicle === VEHICLE_PLANE;
-    const unit = isPlane ? plane : tank;
+    const isRifle = vehicle === VEHICLE_RIFLEMAN;
+    const unit = isPlane ? plane : isRifle ? rifleman : tank;
     // HP bar: green above 50%, amber above 25%, red below.
     const hpPct = Math.max(0, (unit.hp / unit.maxHp) * 100);
     hpFill.style.width = hpPct + "%";
     hpFill.style.background = hpPct > 50 ? "#4caf50" : hpPct > 25 ? "#ffb300" : "#f44336";
     // Speed (km/h) and heading (degrees + compass point). In the tank the
-    // heading follows the TURRET (the camera orbits with it), not the hull.
+    // heading follows the TURRET (the camera orbits with it); in the rifleman
+    // it follows the body (there is no separate turret).
     hudSpeed.textContent = Math.round((isPlane ? unit.forwardSpeed : Math.abs(unit.speed)) * 3.6);
-    const heading = isPlane ? unit.yaw : unit.yaw + unit.turretYaw;
+    const heading = isPlane ? unit.yaw : isRifle ? unit.yaw : unit.yaw + unit.turretYaw;
     const bearing = ((360 - THREE.MathUtils.radToDeg(heading)) % 360 + 360) % 360;
     const card = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Math.round(bearing / 45) % 8];
     hudHeading.textContent = Math.round(bearing) + "\u00B0 " + card;
@@ -2243,6 +2364,19 @@ const Game = (() => {
       stall.classList.toggle("hidden", !stalling);
       if (stalling && !stallWarned) EngineAudio.warnBeep();
       stallWarned = stalling;
+    } else if (isRifle) {
+      // Sniper: READY, or the reload countdown (red while reloading). The shot
+      // and the reload are driven in phase 3; phase 1 just shows the state.
+      if (sniperReload > 0) {
+        hudSniper.textContent = sniperReload.toFixed(1) + "s";
+        hudSniper.classList.add("empty");
+      } else {
+        hudSniper.textContent = "READY";
+        hudSniper.classList.remove("empty");
+      }
+      // Grenade count (red while empty; no "∞" case for the rifleman).
+      hudGrenades.textContent = grenadeAmmo;
+      hudGrenades.classList.toggle("empty", grenadeAmmo === 0);
     } else {
       // Shell status: READY, or the reload countdown (red while reloading).
       if (shellReload > 0) {
@@ -2257,14 +2391,15 @@ const Game = (() => {
     // red while the gun is locked out.
     if (gunTemp >= 50) gunHeatShown = true;
     else if (gunTemp <= 0) gunHeatShown = false;
-    // The heat bar is only useful for the active weapon (tank MG or plane cannon).
-    const gunEnabled = isPlane ? cannonEnabled : mgEnabled;
+    // The heat bar is only useful for the active weapon (tank MG or plane
+    // cannon); the rifleman's sniper reloads instead of heating.
+    const gunEnabled = isRifle ? false : isPlane ? cannonEnabled : mgEnabled;
     gunHeat.classList.toggle("hidden", !(state === "playing" && gunHeatShown && gunEnabled));
     const heatPct = (gunTemp / GUN_MAX_TEMP) * 100;
     gunHeatFill.style.width = heatPct + "%";
     gunHeatFill.style.background = gunOverheated ? "#f44336" : heatPct > 75 ? "#ff5722" : "#ffb300";
-    // OVERHEAT warning: a beep the moment it appears.
-    const overheating = state === "playing" && gunOverheated;
+    // OVERHEAT warning: a beep the moment it appears (tank MG / plane cannon).
+    const overheating = state === "playing" && gunOverheated && !isRifle;
     overheat.classList.toggle("hidden", !overheating);
     if (overheating && !overheatWarned) EngineAudio.warnBeep();
     overheatWarned = overheating;
@@ -2279,6 +2414,12 @@ const Game = (() => {
     }
     if (vehicle === VEHICLE_PLANE) {
       _aimPt.copy(plane.position).addScaledVector(plane.forward, 1000).project(camera);
+    } else if (vehicle === VEHICLE_RIFLEMAN) {
+      // The crosshair sits where the rifle points: the muzzle out along the
+      // aim (body yaw + pitch), which the camera looks down.
+      rifleman.muzzleWorld(_muzzle);
+      rifleman.aimDir(_barrel);
+      _aimPt.copy(_muzzle).addScaledVector(_barrel, 1000).project(camera);
     } else {
       _aimPt.copy(tank.position).addScaledVector(tank.barrelDir(_barrel), 1000).project(camera);
     }
@@ -2507,7 +2648,15 @@ const Game = (() => {
       const alivePlanes = vehicle === VEHICLE_PLANE ? [plane] : [];
       for (const slot of planeFleet) if (slot.plane.alive) alivePlanes.push(slot.plane);
       ctx.planes = alivePlanes;
-      ctx.player = vehicle === VEHICLE_PLANE ? plane : tank;
+      // The active player unit. The player rifleman is NOT added to the tank /
+      // rifleman / plane lists above: in phase 1 it is a pure ghost (no CPU
+      // unit can target or hit it). Phases 2-3 add it to the target + hit lists.
+      ctx.player =
+        vehicle === VEHICLE_PLANE
+          ? plane
+          : vehicle === VEHICLE_RIFLEMAN
+            ? rifleman
+            : tank;
       // Every hittable unit (tanks + riflemen + planes): the weapon pools are
       // target-agnostic and hit-test this list.
       ctx.units = aliveTanks.concat(aliveRiflemen, alivePlanes);
@@ -2567,7 +2716,7 @@ const Game = (() => {
         // impact marker, and call out an enemy that sits in the blast / on the arc.
         const zeroed = ballistic.update(tank, terrain, ctx.units);
         zeroedHint.classList.toggle("hidden", !zeroed);
-      } else {
+      } else if (vehicle === VEHICLE_PLANE) {
         inGarage = false; // the garage hint is tank-only (M9)
         const pc = planeController.update(dt, plane, ctx);
         plane.update(dt, pc);
@@ -2610,6 +2759,20 @@ const Game = (() => {
         // Player plane vs CPU plane (body collision) and ground/scenery crash.
         if (plane.alive) checkPlaneRam();
         if (plane.alive) checkPlaneCollisions();
+      } else {
+        // Rifleman (the "hunter"): walk / sprint / turn / aim. Phase 1 has no
+        // weapons (phase 3) and no aggro (phase 2), so the world idles as before.
+        inGarage = false; // the garage hint is tank-only for now
+        const rc = riflemanController.update(dt, rifleman, ctx);
+        _prevPos.copy(rifleman.position);
+        rifleman.update(dt, rc, terrain);
+        blockObstacle(rifleman, _prevPos);
+        blockAAGun(rifleman, _prevPos, false); // blocked by AA guns, takes no damage
+        focus.copy(rifleman.position);
+
+        // Reveal timer (the "ghost" state): counts down each frame. Phase 2
+        // sets it when the player fires/throws and drives the SPOTTED warning.
+        playerRevealTimer = Math.max(0, playerRevealTimer - dt);
       }
       perf.phase.player += performance.now() - _t; _t = performance.now();
 
@@ -2838,6 +3001,8 @@ const Game = (() => {
         // a ram, an obstacle, or a plane crash/collision).
         if (vehicle === VEHICLE_PLANE) {
           if (!plane.alive) destroyPlayer(destroyReason || "You were shot down.");
+        } else if (vehicle === VEHICLE_RIFLEMAN) {
+          if (!rifleman.alive) destroyPlayer(destroyReason || "You were killed.");
         } else {
           if (!tank.alive) destroyPlayer(destroyReason || "You were destroyed.");
         }
@@ -2845,8 +3010,14 @@ const Game = (() => {
       perf.phase.weapons += performance.now() - _t; _t = performance.now();
 
       if (state === "playing") {
-        distance += (vehicle === VEHICLE_PLANE ? plane.speed : Math.abs(tank.speed)) * dt;
+        distance +=
+          (vehicle === VEHICLE_PLANE
+            ? plane.speed
+            : vehicle === VEHICLE_RIFLEMAN
+              ? Math.abs(rifleman.speed)
+              : Math.abs(tank.speed)) * dt;
         if (vehicle === VEHICLE_PLANE) planeCam.update(dt, plane);
+        else if (vehicle === VEHICLE_RIFLEMAN) riflemanCam.update(dt, rifleman);
         else chaseCam.update(dt, tank);
         terrain.update(focus);
         scenery.update(dt, focus);
@@ -2858,6 +3029,9 @@ const Game = (() => {
       if (vehicle === VEHICLE_PLANE) {
         scenery.update(dt, plane.position);
         planeCam.update(dt, plane);
+      } else if (vehicle === VEHICLE_RIFLEMAN) {
+        scenery.update(dt, rifleman.position);
+        riflemanCam.update(dt, rifleman);
       } else {
         scenery.update(dt, tank.position);
         chaseCam.update(dt, tank);
@@ -2868,11 +3042,12 @@ const Game = (() => {
           const km = (distance / 1000).toFixed(1);
           const score = damageDealt + kills * KILL_SCORE;
           const isPlane = vehicle === VEHICLE_PLANE;
+          const isRifle = vehicle === VEHICLE_RIFLEMAN;
           showOverlay(
-            isPlane ? "CRASHED" : "DESTROYED",
+            isPlane ? "CRASHED" : isRifle ? "KILLED" : "DESTROYED",
             destroyReason +
               "<br />You " +
-              (isPlane ? "flew" : "drove") +
+              (isPlane ? "flew" : isRifle ? "walked" : "drove") +
               " " +
               km +
               " km. Kills: " +
@@ -2880,15 +3055,15 @@ const Game = (() => {
               ". Score: " +
               score +
               ".",
-            isPlane ? "Fly again (R)" : "Drive again (R)"
+            isPlane ? "Fly again (R)" : isRifle ? "Move again (R)" : "Drive again (R)"
           );
         }
       }
     } else if (state === "ready") {
-      // Idle scene: world gently alive. The tank orbits the map center; the
-      // plane idles (prop ticking) with the camera snapped behind it (M9).
-      if (vehicle === VEHICLE_TANK) updateReadyCamera(dt);
-      else plane.idleProp(dt);
+      // Idle scene: world gently alive. The tank and rifleman orbit the map
+      // center; the plane idles (prop ticking) with the camera behind it (M9).
+      if (vehicle === VEHICLE_PLANE) plane.idleProp(dt);
+      else updateReadyCamera(dt);
       terrain.update(focus);
       scenery.update(dt, focus);
     } else if (state === "paused") {
@@ -2922,7 +3097,9 @@ const Game = (() => {
       state === "playing"
         ? vehicle === VEHICLE_PLANE
           ? plane.throttle
-          : playerController.control.throttle
+          : vehicle === VEHICLE_RIFLEMAN
+            ? riflemanController.control.throttle
+            : playerController.control.throttle
         : 0
     );
     Music.update(dt, state);

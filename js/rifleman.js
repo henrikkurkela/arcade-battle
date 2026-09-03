@@ -19,11 +19,17 @@
 const RIFLEMAN_HP = 40;
 const RIFLEMAN_SOFT_ARMOR = 1; // no armor: full small-arms damage
 const RIFLEMAN_HARD_ARMOR = 1; // no armor: full main-gun damage
-const RIFLEMAN_SPEED = 5; // m/s on foot
-const RIFLEMAN_TURN_RATE = 2.6; // rad/s (in-place pivot)
+const RIFLEMAN_SPEED = 5; // m/s on foot (walk pace; also the reverse pace)
+const RIFLEMAN_SPRINT_SPEED = 8; // m/s while sprinting (Shift, forward only)
+const RIFLEMAN_TURN_RATE = 2.6; // rad/s (in-place pivot, keyboard A/D)
 const RIFLEMAN_ACCEL = 8; // m/s^2 up to the walking pace
 const RIFLEMAN_DECEL = 10; // m/s^2 slowing down
 const WALK_FREQ = 1.8; // leg swing cycles per meter
+// Player aim (the body yaw + pitch, driven by the pointer-locked mouse). The
+// CPU squad never sets these, so its aim stays horizontal (pitch = 0).
+const RIFLEMAN_MOUSE_SENS = 0.0022; // rad/px (matches the tank turret)
+const RIFLEMAN_AIM_PITCH_MIN = THREE.MathUtils.degToRad(-30); // aim pitch limits
+const RIFLEMAN_AIM_PITCH_MAX = THREE.MathUtils.degToRad(60);
 
 // A few uniform palettes so a squad doesn't read as one clone.
 const RIFLEMAN_UNIFORMS = [
@@ -38,8 +44,9 @@ class Rifleman {
     this.scene = scene;
     this.position = new THREE.Vector3(0, 0, 0);
     this.velocity = new THREE.Vector3(); // 2D motion (x, z); y stays 0
-    this.speed = 0; // scalar along the body heading (no reverse on foot)
+    this.speed = 0; // scalar along the body heading (+ forward, - reverse)
     this.yaw = 0;
+    this.pitch = 0; // aim pitch (player only; the mouse looks up/down the rifle)
     this.hullPitch = 0;
     this.hullRoll = 0;
 
@@ -82,6 +89,23 @@ class Rifleman {
     return out.copy(this.forward);
   }
 
+  /** World-space aim direction: the body heading (yaw) plus the aim pitch.
+   *  This is where the player looks down the rifle (and, in phase 3, where the
+   *  sniper ray and the camera point). For the CPU squad the pitch is 0, so
+   *  this reduces to the horizontal body front. */
+  aimDir(out) {
+    const cp = Math.cos(this.pitch);
+    out.set(-Math.sin(this.yaw) * cp, Math.sin(this.pitch), -Math.cos(this.yaw) * cp);
+    return out;
+  }
+
+  /** World-space head/eye point (write into `out` to avoid allocation). The
+   *  rifleman camera (over-the-shoulder + scope) is anchored here. */
+  headWorld(out) {
+    this.group.updateMatrixWorld(true);
+    return this.headCamObj.getWorldPosition(out);
+  }
+
   /** Apply damage. `kind` selects the armor divisor: "soft" (small arms /
    *  MG) or "hard" (main gun); omit it for unarmored physical damage
    *  (collision). Returns the HP actually deducted (0 if dead or fully
@@ -109,6 +133,7 @@ class Rifleman {
     this.velocity.set(0, 0, 0);
     this.speed = 0;
     this.yaw = yaw || 0;
+    this.pitch = 0;
     this.hullPitch = 0;
     this.hullRoll = 0;
     this.hp = this.maxHp;
@@ -118,15 +143,28 @@ class Rifleman {
   }
 
   /**
-   * One physics step. `control = { throttle: 0..1, steer: -1..1, firing }`
-   * (produced by RiflemanAI). `terrain` provides heightAt for ground-following.
+   * One physics step. `control = { throttle: -1..1, steer: -1..1, firing }`
+   * (produced by RiflemanAI for the squad, RiflemanPlayerController for the
+   * player). The player's control also carries `sprint` (0/1) and the pointer
+   * aim deltas `aimDX`/`aimDY`; the squad omits them (no sprint, no aim pitch).
+   * `terrain` provides heightAt for ground-following.
    */
   update(dt, control, terrain) {
-    const throttleIn = clamp(control.throttle, 0, 1);
+    const throttleIn = clamp(control.throttle, -1, 1);
     const steerIn = clamp(control.steer, -1, 1);
+    // Player-only inputs (the CPU squad's control has none of these): sprint
+    // (Shift) and the pointer-locked aim deltas (body yaw + pitch).
+    const sprinting = control.sprint ? 1 : 0;
+    const aimDX = control.aimDX || 0;
+    const aimDY = control.aimDY || 0;
 
-    // Longitudinal: ease toward the walking pace (no reverse on foot).
-    const target = throttleIn * RIFLEMAN_SPEED;
+    // Longitudinal: ease toward the pace. Forward walks (5) or sprints (8);
+    // reverse is at the walk pace (a soldier backs up slowly).
+    const maxSpeed =
+      throttleIn >= 0
+        ? (sprinting ? RIFLEMAN_SPRINT_SPEED : RIFLEMAN_SPEED)
+        : RIFLEMAN_SPEED;
+    const target = throttleIn * maxSpeed;
     if (this.speed < target) this.speed = Math.min(target, this.speed + RIFLEMAN_ACCEL * dt);
     else this.speed = Math.max(target, this.speed - RIFLEMAN_DECEL * dt);
 
@@ -140,8 +178,13 @@ class Rifleman {
       if (slopeUp > SLOPE_TAN) this.speed = 0;
     }
 
-    // Turning: free in-place pivot (a soldier can rotate on the spot).
+    // Turning: free in-place pivot (a soldier can rotate on the spot). The
+    // keyboard steers at a fixed rate; the pointer-locked mouse aims the body
+    // directly (yaw) and the rifle (pitch) — the player's "turn in place".
     this.yaw += steerIn * RIFLEMAN_TURN_RATE * dt;
+    this.yaw -= aimDX * RIFLEMAN_MOUSE_SENS;
+    this.pitch += -aimDY * RIFLEMAN_MOUSE_SENS;
+    this.pitch = clamp(this.pitch, RIFLEMAN_AIM_PITCH_MIN, RIFLEMAN_AIM_PITCH_MAX);
 
     // Move (2D; y is re-derived from the terrain below).
     const fwd = this.forward;
@@ -172,6 +215,9 @@ class Rifleman {
   _syncGroup() {
     this.group.position.copy(this.position);
     this.group.rotation.set(this.hullPitch, this.yaw, this.hullRoll, "YXZ");
+    // Tilt the rifle to the aim pitch (the player looks up/down the barrel).
+    // The CPU squad's pitch is always 0, so this is a no-op for them.
+    if (this.rifle) this.rifle.rotation.x = this.pitch;
   }
 
   /** Swing the legs (opposite phase) with the current speed. */
@@ -255,6 +301,12 @@ class Rifleman {
     this.muzzleObj.position.set(0, 0.02, -0.66);
     rifle.add(this.muzzleObj);
     g.add(rifle);
+    this.rifle = rifle; // kept so _syncGroup() can tilt it to the aim pitch
+
+    // Head/eye anchor for the rifleman camera (over-the-shoulder + scope).
+    this.headCamObj = new THREE.Object3D();
+    this.headCamObj.position.set(0, 1.5, 0);
+    g.add(this.headCamObj);
 
     g.traverse((o) => {
       if (o.isMesh) o.castShadow = true;

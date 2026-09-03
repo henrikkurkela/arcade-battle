@@ -4,8 +4,10 @@
 // Controllers. Each produces `control = { throttle, steer, brake, turretDX,
 // turretDY, firing, shellFiring }` (throttle/steer in [-1, 1], brake 0/1,
 // turretDX/turretDY raw pointer deltas) plus the fire flags.
-//   PlayerController: keyboard + mouse -> control.
-//   TankAI:           ground steering + targeting + firing (M4).
+//   PlayerController:          tank keyboard + mouse -> control.
+//   PlanePlayerController:     plane keyboard + mouse -> control.
+//   RiflemanPlayerController:  on-foot keyboard + pointer aim -> control.
+//   TankAI:                    ground steering + targeting + firing (M4).
 // `ctx` = { player, tanks, terrain } (built by main.js).
 // ---------------------------------------------------------------------------
 
@@ -196,6 +198,47 @@ class PlanePlayerController {
     // Left click (or Space) fires the cannon; right click (or X) rockets.
     c.firing = Input.isDown("Space") || Input.isMouseDown("left");
     c.rocketFiring = Input.isDown("KeyX") || Input.isMouseDown("right");
+    return this.control;
+  }
+}
+
+// --- RiflemanPlayerController (rifleman vehicle) -----------------------------
+// On-foot controls: pointer-locked mouse aims the body (yaw) + rifle (pitch),
+// W/S walk forward/back (back at the walk pace), A/D turn in place, Shift
+// sprints. Left click / Space fires the sniper (phase 3); right click / X
+// throws a grenade (phase 3). The fire flags are produced here but only acted
+// on once the weapons land; phase 1 just walks, sprints, turns and aims.
+class RiflemanPlayerController {
+  constructor() {
+    this.control = {
+      throttle: 0,
+      steer: 0,
+      sprint: 0,
+      aimDX: 0,
+      aimDY: 0,
+      firing: false,
+      grenadeFiring: false,
+    };
+  }
+
+  update(dt, rifleman, ctx) {
+    const c = this.control;
+    // Walk forward (W) / back (S, at the walk pace — the model caps reverse).
+    c.throttle =
+      (Input.isDown("KeyW", "ArrowUp") ? 1 : 0) -
+      (Input.isDown("KeyS", "ArrowDown") ? 1 : 0);
+    // Turn in place (A/D). The mouse also drives the body yaw (aimDX below).
+    c.steer =
+      (Input.isDown("KeyA", "ArrowLeft") ? 1 : 0) -
+      (Input.isDown("KeyD", "ArrowRight") ? 1 : 0);
+    c.sprint = Input.isDown("ShiftLeft", "ShiftRight") ? 1 : 0;
+    // Left click (or Space) fires the sniper; right click (or X) a grenade.
+    c.firing = Input.isMouseDown("left") || Input.isDown("Space");
+    c.grenadeFiring = Input.isMouseDown("right") || Input.isDown("KeyX");
+    // Consume the pointer deltas accumulated since the last frame (aim).
+    const d = Input.consumeMouseDelta();
+    c.aimDX = d.dx;
+    c.aimDY = d.dy;
     return this.control;
   }
 }

@@ -199,3 +199,109 @@ class PlaneChaseCamera {
     this._look.copy(this._pos).addScaledVector(plane.forward, 10);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Rifleman camera: two modes, toggled with 1 / 2 (rifleman only).
+//  - "shoulder" (default): over-the-shoulder, just behind and to the side of
+//    the head, looking down the rifle (the crosshair + ballistic line read).
+//  - "scope": a tight FOV from the eye, looking straight down the barrel; the
+//    line + ZEROED readout are the aiming tools. In v1 the scope is a zoom
+//    only — it does NOT lock movement (backlog).
+// The soldier stays upright, so the camera up stays world-up (no banking).
+// ---------------------------------------------------------------------------
+
+const RCAM_SHOULDER_BACK = 1.1; // m behind the head, along the aim
+const RCAM_SHOULDER_SIDE = 0.4; // m to the right of the head
+const RCAM_SHOULDER_UP = 0.15; // m above the head
+const RCAM_LOOK_AHEAD = 6; // m ahead along the aim (where the camera looks)
+const RCAM_FOV_SHOULDER = 70;
+const RCAM_FOV_SCOPE = 22; // tight zoom
+
+class RiflemanChaseCamera {
+  constructor(camera) {
+    this.camera = camera;
+    this.mode = "shoulder"; // "shoulder" (over-the-shoulder) | "scope" (at the eye)
+    this.shake = 0;
+    this._pos = new THREE.Vector3();
+    this._look = new THREE.Vector3();
+    this._head = new THREE.Vector3();
+    this._aim = new THREE.Vector3();
+    this._right = new THREE.Vector3();
+    this._up = new THREE.Vector3(0, 1, 0);
+  }
+
+  /** Instantly place the camera (used on spawn/restart). */
+  snap(rifleman) {
+    this._place(rifleman);
+    this.camera.up.set(0, 1, 0);
+    this._setFov();
+    this.camera.lookAt(this._look);
+  }
+
+  update(dt, rifleman) {
+    const shoulder = this.mode !== "scope";
+    if (shoulder) {
+      // Ease the over-the-shoulder position toward the head (frame-rate
+      // independent smoothing, like the tank/plane chase cameras).
+      const t = 1 - Math.pow(0.0005, dt);
+      this._desired(rifleman);
+      this.camera.position.lerp(this._pos, t);
+    } else {
+      // Scope: instant, locked to the eye.
+      this._place(rifleman);
+    }
+
+    // The soldier stays upright: the camera up is world-up (no banking).
+    this.camera.up.set(0, 1, 0);
+
+    // Hit / destruction shake.
+    if (this.shake > 0.001) {
+      const s = this.shake;
+      this.camera.position.x += (Math.random() - 0.5) * s;
+      this.camera.position.y += (Math.random() - 0.5) * s;
+      this.shake *= Math.pow(0.05, dt);
+    }
+
+    this.camera.lookAt(this._look);
+    this._setFov();
+  }
+
+  /** Desired over-the-shoulder position + look point (written to _pos/_look). */
+  _desired(rifleman) {
+    rifleman.headWorld(this._head);
+    rifleman.aimDir(this._aim);
+    this._right.crossVectors(this._aim, this._up).normalize();
+    this._pos
+      .copy(this._head)
+      .addScaledVector(this._aim, -RCAM_SHOULDER_BACK)
+      .addScaledVector(this._right, RCAM_SHOULDER_SIDE)
+      .addScaledVector(this._up, RCAM_SHOULDER_UP);
+    this._look.copy(this._head).addScaledVector(this._aim, RCAM_LOOK_AHEAD);
+  }
+
+  /** Instant placement: scope sits at the eye, shoulder just behind it. */
+  _place(rifleman) {
+    rifleman.headWorld(this._head);
+    rifleman.aimDir(this._aim);
+    if (this.mode === "scope") {
+      this.camera.position.copy(this._head);
+    } else {
+      this._right.crossVectors(this._aim, this._up).normalize();
+      this.camera.position
+        .copy(this._head)
+        .addScaledVector(this._aim, -RCAM_SHOULDER_BACK)
+        .addScaledVector(this._right, RCAM_SHOULDER_SIDE)
+        .addScaledVector(this._up, RCAM_SHOULDER_UP);
+    }
+    this._look.copy(this._head).addScaledVector(this._aim, RCAM_LOOK_AHEAD);
+  }
+
+  /** Set the mode's FOV (the scope is a tight zoom). */
+  _setFov() {
+    const fov = this.mode === "scope" ? RCAM_FOV_SCOPE : RCAM_FOV_SHOULDER;
+    if (Math.abs(this.camera.fov - fov) > 0.05) {
+      this.camera.fov = fov;
+      this.camera.updateProjectionMatrix();
+    }
+  }
+}

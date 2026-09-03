@@ -121,6 +121,22 @@ canvas {
   color: #ff5252;
 }
 
+#hud-sniper {
+  color: #ffd24a;
+}
+
+#hud-sniper.empty {
+  color: #ff5252;
+}
+
+#hud-grenades {
+  color: #ffd24a;
+}
+
+#hud-grenades.empty {
+  color: #ff5252;
+}
+
 #crosshair {
   position: absolute;
   top: 0;
@@ -166,6 +182,21 @@ canvas {
   letter-spacing: 5px;
   color: #ff5252;
   text-shadow: 0 0 12px rgba(255, 60, 60, 0.8);
+  animation: blink 0.5s steps(2, start) infinite;
+}
+
+/* SPOTTED (rifleman): you are revealed and being hunted. Amber (not the
+   combat red) so it reads as a stealth warning, not a damage warning. */
+#spotted {
+  position: absolute;
+  top: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 5px;
+  color: #ffb300;
+  text-shadow: 0 0 12px rgba(255, 179, 0, 0.8);
   animation: blink 0.5s steps(2, start) infinite;
 }
 
