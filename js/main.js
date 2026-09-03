@@ -273,9 +273,10 @@ const Game = (() => {
         secondaryBlastRadius: 8, secondarySpeed: 20,
         secondaryFuseRadius: 2, secondaryLife: 5,
         secondaryFireInterval: 0.5, secondaryDamagePerUnit: 100,
-        sprintMul: 1.0, revealTime: 10 },
+        sprintMul: 1.0, revealTime: 10, hasStealth: true,
+        softArmor: 1, hardArmor: 1 },
       { id: "pioneer", name: "PIONEER",
-        blurb: "You&rsquo;re a fast anti-armor rusher.<br />A 25-round SMG clip and a fast rocket launcher.<br />Dump the clip, reload, and pop a rocket at the tank.<br />Sprint during reload &mdash; loud, but you re-ghost in 5s.",
+        blurb: "You&rsquo;re a fast anti-armor rusher &mdash; no stealth, no ghosting.<br />A 25-round SMG clip and a fast rocket launcher.<br />Dump the clip, reload, and pop a rocket at the tank.<br />You&rsquo;re always visible: fight loud, fight fast.",
         ballisticComputer: true,
         primaryDamage: 8, primaryRange: 300, primaryHitRadius: 2,
         primaryReload: 1.8, primaryClipSize: 25, primaryInterval: 0.1,
@@ -285,7 +286,8 @@ const Game = (() => {
         secondaryBlastRadius: 12, secondarySpeed: 250,
         secondaryFuseRadius: 5, secondaryLife: 5,
         secondaryFireInterval: 1.0, secondaryDamagePerUnit: 150,
-        sprintMul: 1.125, revealTime: 5 },
+        sprintMul: 1.125, revealTime: 5, hasStealth: false,
+        softArmor: 2, hardArmor: 1 },
     ],
   };
 
@@ -613,6 +615,7 @@ const Game = (() => {
   let secondaryFireInterval = GRENADE_FIRE_INTERVAL;
   let secondaryDamagePerUnit = GRENADE_DAMAGE_PER_GRENADE;
   let revealTime = PLAYER_REVEAL_TIME;
+  let hasStealth = true;
   // Plane combat state (M9). The gun heat/overheat state is shared with the
   // tank's MG (only one vehicle is active at a time).
   let rocketAmmo = ROCKET_MAX_AMMO;
@@ -1070,7 +1073,10 @@ const Game = (() => {
   secondaryFireInterval = lo.secondaryFireInterval ?? GRENADE_FIRE_INTERVAL;
   secondaryDamagePerUnit = lo.secondaryDamagePerUnit ?? GRENADE_DAMAGE_PER_GRENADE;
   revealTime = lo.revealTime ?? PLAYER_REVEAL_TIME;
+  hasStealth = lo.hasStealth ?? true;
   rifleman.sprintMul = lo.sprintMul ?? 1;
+  rifleman.softArmor = lo.softArmor ?? 1;
+  rifleman.hardArmor = lo.hardArmor ?? 1;
   // HUD labels reflect the rifleman loadout's weapons.
   if (vehicle === VEHICLE_RIFLEMAN) {
     hudSniperLabel.textContent = primaryClipSize > 1 ? "SMG" : "SNIPER";
@@ -1759,8 +1765,10 @@ const Game = (() => {
   }
 
   /** Reveal the player (any weapon fire): start the reveal timer, and call it
-    *  out in the message feed the moment the player stops being a ghost. */
+    *  out in the message feed the moment the player stops being a ghost.
+    *  No-op when the loadout has no stealth (PIONEER: always revealed). */
   function revealPlayer() {
+    if (!hasStealth) return;
     if (playerRevealTimer <= 0) {
       addMessage("You are spotted \u2014 " + Math.ceil(revealTime) + "s to get clear");
     }
@@ -2562,11 +2570,11 @@ const Game = (() => {
       // Secondary: grenade or rocket count (red while empty).
       hudGrenades.textContent = secondaryAmmo;
       hudGrenades.classList.toggle("empty", secondaryAmmo === 0);
-      // SPOTTED warning: the reveal timer is running (you fired / threw) AND a
-      // CPU unit is close enough to actually spot you (the reveal only reaches
-      // PLAYER_REVEAL_RADIUS). A beep the moment it appears, like STALL / OVERHEAT.
+      // SPOTTED warning (stealth loadouts only): the reveal timer is running
+      // AND a CPU unit is close enough to actually spot you. A beep the moment
+      // it appears. No-stealth loadouts (PIONEER) are always visible — no warning.
       const isSpotted =
-        state === "playing" && playerRevealTimer > 0 && enemyCanSpotRifleman();
+        state === "playing" && hasStealth && playerRevealTimer > 0 && enemyCanSpotRifleman();
       spotted.classList.toggle("hidden", !isSpotted);
       if (isSpotted) spottedTime.textContent = Math.ceil(playerRevealTimer);
       if (isSpotted && !spottedWarned) EngineAudio.warnBeep();
@@ -2857,7 +2865,7 @@ const Game = (() => {
       // Only while the rifleman is the ACTIVE vehicle (the dormant unit
       // idles at the garage hidden otherwise and must not be targetable).
       ctx.playerRifleman = vehicle === VEHICLE_RIFLEMAN ? rifleman : null;
-      ctx.playerRevealed = vehicle === VEHICLE_RIFLEMAN && playerRevealTimer > 0;
+      ctx.playerRevealed = vehicle === VEHICLE_RIFLEMAN && (!hasStealth || playerRevealTimer > 0);
       // Every hittable unit (tanks + riflemen + planes): the weapon pools are
       // target-agnostic and hit-test this list. The player rifleman joins
       // while active: its "player" team is distinct from the CPU squad's, so
