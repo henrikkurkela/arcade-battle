@@ -90,9 +90,9 @@ class Rifleman {
   }
 
   /** World-space aim direction: the body heading (yaw) plus the aim pitch.
-   *  This is where the player looks down the rifle (and, in phase 3, where the
-   *  sniper ray and the camera point). For the CPU squad the pitch is 0, so
-   *  this reduces to the horizontal body front. */
+   *  This is where the player looks down the rifle (and where the sniper ray,
+   *  the grenade throw, and the camera point). For the CPU squad the pitch is
+   *  0, so this reduces to the horizontal body front. */
   aimDir(out) {
     const cp = Math.cos(this.pitch);
     out.set(-Math.sin(this.yaw) * cp, Math.sin(this.pitch), -Math.cos(this.yaw) * cp);

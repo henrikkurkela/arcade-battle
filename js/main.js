@@ -179,13 +179,22 @@ const Game = (() => {
   const VEHICLE_PLANE = "plane";
   const VEHICLE_RIFLEMAN = "rifleman";
   // Rifleman weapons + stealth (the player is the third vehicle, the "hunter").
-  // The hitscan sniper / grenade throw logic lands in phase 3; the reveal
-  // trigger points + SPOTTED warning land in phase 2. Phase 1 only needs the
-  // state + the title-screen slot, so these constants seed that state now.
+  // The stealth tuning (reveal time / radius, rifleman eyes / ears) lives in
+  // ai.js with the target-selection code that reads it.
   const SNIPER_RELOAD = 3; // s to reload the one round in the chamber
+  const SNIPER_DAMAGE = 40; // HARD damage per sniper round (floored by armor)
+  const SNIPER_RANGE = 800; // m; the hitscan ray's max range
+  const SNIPER_HIT_RADIUS = 2; // m; a unit whose center is this close to the ray is hit
   const GRENADE_START = 4; // grenades held at the start of a run
   const GRENADE_MAX = 6; // grenade cap (earned back by dealing damage)
-  const PLAYER_REVEAL_TIME = 10; // s the player is revealed after firing/throwing
+  const GRENADE_DAMAGE = 40; // HARD at the blast center
+  const GRENADE_DAMAGE_MIN = 15; // HARD at the blast edge
+  const GRENADE_BLAST_RADIUS = 8; // m
+  const GRENADE_SPEED = 20; // m/s throw speed (~40 m range at 45 deg)
+  const GRENADE_LIFE = 5; // s fuse backstop (it also detonates on ground contact)
+  const GRENADE_FUSE_RADIUS = 2; // m; proximity stand-off (detonates near a unit)
+  const GRENADE_FIRE_INTERVAL = 0.5; // s between throws
+  const GRENADE_DAMAGE_PER_GRENADE = 100; // damage dealt (sniper or grenade) to earn 1
   // Plane player weapons (ported from the Arcade Plane game). SOFT damage: a
   // tank's TANK_SOFT_ARMOR (10) leaves 3 per hit (30/10); vs a plane's armor
   // (3) it deals 10, keeping the player's arcade edge over the CPU's 7.
@@ -336,6 +345,7 @@ const Game = (() => {
   const riflemanHints = document.getElementById("rifleman-hints");
   const stall = document.getElementById("stall");
   const spotted = document.getElementById("spotted");
+  const spottedTime = document.getElementById("spotted-time");
   const landingHint = document.getElementById("landing-hint");
   const zeroedHint = document.getElementById("zeroed-hint");
   const tankFireHint = document.getElementById("tank-fire-hint");
@@ -563,12 +573,15 @@ const Game = (() => {
   let rocketFireCooldown = 0;
   let stallWarned = false;
   let landingHintTimer = 0;
-  // Rifleman combat + stealth state (the third vehicle). The sniper reload and
-  // grenade ammo are driven by the weapons in phase 3; the reveal timer is the
-  // "ghost" state (firing/throwing reveals the player for PLAYER_REVEAL_TIME).
+  // Rifleman combat + stealth state (the third vehicle). The reveal timer is
+  // the "ghost" state: firing the sniper or throwing a grenade reveals the
+  // player for PLAYER_REVEAL_TIME.
   let sniperReload = 0; // s until the sniper is ready again (0 = READY)
   let grenadeAmmo = GRENADE_START;
+  let grenadeDamageAccum = 0; // damage banked toward the next grenade
+  let grenadeFireCooldown = 0; // s until the next throw
   let playerRevealTimer = 0; // s the player is revealed (0 = a pure ghost)
+  let spottedWarned = false; // latched while the SPOTTED warning is showing (beep on appear)
 
   // --- Combat (M3) -----------------------------------------------------------
   let tracers = null;
@@ -606,6 +619,7 @@ const Game = (() => {
   let overlayDelay = 0; // s until the destroyed overlay appears
   const _muzzle = new THREE.Vector3();
   const _barrel = new THREE.Vector3();
+  const _rayEnd = new THREE.Vector3(); // sniper ray's far end (hitscan hit test)
   const _planeDir = new THREE.Vector3(); // plane cannon shot dir (spread applied in place)
   const _aimPt = new THREE.Vector3();
   const _smokePt = new THREE.Vector3();
@@ -845,7 +859,10 @@ const Game = (() => {
     landingHintTimer = 0;
     sniperReload = 0;
     grenadeAmmo = GRENADE_START;
+    grenadeDamageAccum = 0;
+    grenadeFireCooldown = 0;
     playerRevealTimer = 0;
+    spottedWarned = false;
     kills = 0;
     damageDealt = 0;
     rifleKills = 0;
@@ -1004,10 +1021,13 @@ const Game = (() => {
   updateTankHints();
     // The ballistic computer reflects the loadout + the active weapon's physics
     // (the tank's shell or the plane's rocket). The rifleman's is a hitscan
-    // mode that lands in phase 3, so it stays off here.
-    if (ballisticComputer && vehicle !== VEHICLE_RIFLEMAN) {
+    // mode: gravity 0, a large speed, blast/fuse radius 2 (the 2 m hit radius),
+    // and the line clamped to the sniper's max range.
+    if (ballisticComputer) {
       if (vehicle === VEHICLE_TANK) {
         ballistic.configure(SHELL_SPEED, SHELL_GRAVITY, SHELL_LIFE, BLAST_RADIUS, SHELL_FUSE_RADIUS);
+      } else if (vehicle === VEHICLE_RIFLEMAN) {
+        ballistic.configure(4000, 0, 0.2, SNIPER_HIT_RADIUS, SNIPER_HIT_RADIUS, SNIPER_RANGE);
       } else {
         ballistic.configure(ROCKET_SPEED, ROCKET_GRAVITY, ROCKET_LIFE, ROCKET_BLAST_RADIUS, ROCKET_FUSE_RADIUS);
       }
@@ -1418,40 +1438,46 @@ const Game = (() => {
     return n;
   }
 
-  /** Tank vs rifleman: a moving tank that overlaps a rifleman runs him over
-   *  (unarmored physical damage, per-pair cooldown); the rifleman is pushed
-   *  clear of the hull so he can route around it. */
-  function runOverRiflemen(tanks, riflemen) {
+  /** One tank vs one rifleman: a moving tank that overlaps a rifleman runs
+   *  him over (unarmored physical damage, per-pair cooldown); the rifleman is
+   *  pushed clear of the hull so he can route around it. */
+  function runOverPair(t, r) {
+    if (!r.alive) return;
+    const dx = r.position.x - t.position.x;
+    const dz = r.position.z - t.position.z;
+    const d = Math.hypot(dx, dz);
+    if (d >= TANK_RAM_RANGE) return;
+    // Push the rifleman to the edge of the hull's space (he yields).
+    if (d > 1e-3) {
+      r.position.x = t.position.x + (dx / d) * TANK_RAM_RANGE;
+      r.position.z = t.position.z + (dz / d) * TANK_RAM_RANGE;
+    } else {
+      r.position.x = t.position.x + TANK_RAM_RANGE;
+    }
+    r.group.position.copy(r.position);
+    // Only a moving tank deals damage (per-pair cooldown).
+    if (Math.abs(t.speed) < 2) return;
+    t._roCd = t._roCd || new Map();
+    const cd = t._roCd.get(r);
+    if (cd !== undefined && cd > 0) return;
+    t._roCd.set(r, TANK_RAM_COOLDOWN);
+    const raw = Math.round(10 + Math.abs(t.speed) * 2);
+    const dealt = r.takeDamage(raw);
+    if (dealt > 0) recordDamage(t, r, dealt);
+    if (dealt > 0 && r.hp <= 0) {
+      const slot = rifleFleet.find((s) => s.unit === r);
+      if (slot) destroyRifleman(slot, t); // the player's death is handled in the main loop
+    }
+  }
+
+  /** Tank vs rifleman: run over every squad rifleman the tank overlaps (M7).
+   *  `extra` is the player rifleman (included while active: run-over is
+   *  lethal to him too). */
+  function runOverRiflemen(tanks, riflemen, extra) {
     for (const t of tanks) {
       if (!t.alive) continue;
-      for (const r of riflemen) {
-        if (!r.alive) continue;
-        const dx = r.position.x - t.position.x;
-        const dz = r.position.z - t.position.z;
-        const d = Math.hypot(dx, dz);
-        if (d >= TANK_RAM_RANGE) continue;
-        // Push the rifleman to the edge of the hull's space (he yields).
-        if (d > 1e-3) {
-          r.position.x = t.position.x + (dx / d) * TANK_RAM_RANGE;
-          r.position.z = t.position.z + (dz / d) * TANK_RAM_RANGE;
-        } else {
-          r.position.x = t.position.x + TANK_RAM_RANGE;
-        }
-        r.group.position.copy(r.position);
-        // Only a moving tank deals damage (per-pair cooldown).
-        if (Math.abs(t.speed) < 2) continue;
-        t._roCd = t._roCd || new Map();
-        const cd = t._roCd.get(r);
-        if (cd !== undefined && cd > 0) continue;
-        t._roCd.set(r, TANK_RAM_COOLDOWN);
-        const raw = Math.round(10 + Math.abs(t.speed) * 2);
-        const dealt = r.takeDamage(raw);
-        if (dealt > 0) recordDamage(t, r, dealt);
-        if (dealt > 0 && r.hp <= 0) {
-          const slot = rifleFleet.find((s) => s.unit === r);
-          if (slot) destroyRifleman(slot, t);
-        }
-      }
+      for (const r of riflemen) runOverPair(t, r);
+      if (extra) runOverPair(t, extra);
     }
   }
 
@@ -1604,6 +1630,55 @@ const Game = (() => {
     }
   }
 
+  /** Bank player damage toward grenades: every GRENADE_DAMAGE_PER_GRENADE dealt
+   *  (sniper or grenade) earns one, up to the cap (the rocket banking pattern). */
+  function awardGrenadeDamage(dealt) {
+    if (grenadeAmmo >= GRENADE_MAX) return; // no banking while full
+    grenadeDamageAccum += dealt;
+    while (grenadeAmmo < GRENADE_MAX && grenadeDamageAccum >= GRENADE_DAMAGE_PER_GRENADE) {
+      grenadeDamageAccum -= GRENADE_DAMAGE_PER_GRENADE;
+      grenadeAmmo++;
+    }
+  }
+
+  /** Fire the hitscan sniper: an instant ray from the muzzle along the aim
+   *  (body yaw + pitch) that hits the FIRST unit whose center is within
+   *  SNIPER_HIT_RADIUS of the ray, up to SNIPER_RANGE. A miss still cracks
+   *  (and still reveals the player — the caller sets the reveal). */
+  function fireSniper() {
+    const muzzle = rifleman.muzzleWorld(_muzzle);
+    const dir = rifleman.aimDir(_barrel);
+    _rayEnd.copy(muzzle).addScaledVector(dir, SNIPER_RANGE);
+    const ex = _rayEnd.x - muzzle.x;
+    const ey = _rayEnd.y - muzzle.y;
+    const ez = _rayEnd.z - muzzle.z;
+    const lenSq = ex * ex + ey * ey + ez * ez;
+    const hitSq = SNIPER_HIT_RADIUS * SNIPER_HIT_RADIUS;
+    let victim = null;
+    let bestT = Infinity; // the first unit along the ray wins
+    for (const u of ctx.units) {
+      if (!u.alive || u === rifleman) continue;
+      const ox = u.position.x - muzzle.x;
+      const oy = u.position.y - muzzle.y;
+      const oz = u.position.z - muzzle.z;
+      const t = lenSq > 0 ? clamp((ox * ex + oy * ey + oz * ez) / lenSq, 0, 1) : 0;
+      const px = ox - ex * t;
+      const py = oy - ey * t;
+      const pz = oz - ez * t;
+      if (px * px + py * py + pz * pz < hitSq && t < bestT) {
+        bestT = t;
+        victim = u;
+      }
+    }
+    if (victim) {
+      const dealt = victim.takeDamage(SNIPER_DAMAGE, "hard");
+      if (dealt > 0) recordDamage(rifleman, victim, dealt);
+      if (dealt > 0 && victim.hp <= 0) handleKill(rifleman, victim);
+    }
+    flashes.flash(_muzzle);
+    EngineAudio.mgFire(0); // close-range crack; the dedicated sniper sound lands in phase 4
+  }
+
   // --- Smoke ------------------------------------------------------------------
   // One burst of `THREE.Points` particles (the plane's spawnSmoke pattern).
   function spawnSmoke(pos, o = {}) {
@@ -1749,6 +1824,7 @@ const Game = (() => {
     if (owner === player) {
       damageDealt += dealt;
       if (vehicle === VEHICLE_PLANE) awardRocketDamage(dealt);
+      else if (vehicle === VEHICLE_RIFLEMAN) awardGrenadeDamage(dealt);
     } else if (owner.team === "riflemen") {
       rifleDamage += dealt;
     } else if (owner.team === "aa") {
@@ -2377,6 +2453,13 @@ const Game = (() => {
       // Grenade count (red while empty; no "∞" case for the rifleman).
       hudGrenades.textContent = grenadeAmmo;
       hudGrenades.classList.toggle("empty", grenadeAmmo === 0);
+      // SPOTTED warning: the reveal timer is running (you fired / threw).
+      // A beep the moment it appears, like STALL / OVERHEAT.
+      const isSpotted = state === "playing" && playerRevealTimer > 0;
+      spotted.classList.toggle("hidden", !isSpotted);
+      if (isSpotted) spottedTime.textContent = Math.ceil(playerRevealTimer);
+      if (isSpotted && !spottedWarned) EngineAudio.warnBeep();
+      spottedWarned = isSpotted;
     } else {
       // Shell status: READY, or the reload countdown (red while reloading).
       if (shellReload > 0) {
@@ -2649,17 +2732,27 @@ const Game = (() => {
       for (const slot of planeFleet) if (slot.plane.alive) alivePlanes.push(slot.plane);
       ctx.planes = alivePlanes;
       // The active player unit. The player rifleman is NOT added to the tank /
-      // rifleman / plane lists above: in phase 1 it is a pure ghost (no CPU
-      // unit can target or hit it). Phases 2-3 add it to the target + hit lists.
+      // rifleman / plane lists above: the AI reads it via ctx.playerRifleman,
+      // gated on the reveal flag (ctx.playerRevealed) — a pure ghost until it
+      // fires. It IS added to the hit list below, so CPU weapons can hit it.
       ctx.player =
         vehicle === VEHICLE_PLANE
           ? plane
           : vehicle === VEHICLE_RIFLEMAN
             ? rifleman
             : tank;
+      // Only while the rifleman is the ACTIVE vehicle (the dormant unit
+      // idles at the garage hidden otherwise and must not be targetable).
+      ctx.playerRifleman = vehicle === VEHICLE_RIFLEMAN ? rifleman : null;
+      ctx.playerRevealed = vehicle === VEHICLE_RIFLEMAN && playerRevealTimer > 0;
       // Every hittable unit (tanks + riflemen + planes): the weapon pools are
-      // target-agnostic and hit-test this list.
-      ctx.units = aliveTanks.concat(aliveRiflemen, alivePlanes);
+      // target-agnostic and hit-test this list. The player rifleman joins
+      // while active: its "player" team is distinct from the CPU squad's, so
+      // a CPU rifleman's burst (eyes/ears) and a tank's shell can kill it.
+      ctx.units =
+        vehicle === VEHICLE_RIFLEMAN && rifleman.alive
+          ? aliveTanks.concat(aliveRiflemen, alivePlanes, [rifleman])
+          : aliveTanks.concat(aliveRiflemen, alivePlanes);
 
       // Player: controls -> physics -> weapons (branch on vehicle, M9).
       if (vehicle === VEHICLE_TANK) {
@@ -2760,8 +2853,7 @@ const Game = (() => {
         if (plane.alive) checkPlaneRam();
         if (plane.alive) checkPlaneCollisions();
       } else {
-        // Rifleman (the "hunter"): walk / sprint / turn / aim. Phase 1 has no
-        // weapons (phase 3) and no aggro (phase 2), so the world idles as before.
+        // Rifleman (the "hunter"): walk / sprint / turn / aim, sniper + grenades.
         inGarage = false; // the garage hint is tank-only for now
         const rc = riflemanController.update(dt, rifleman, ctx);
         _prevPos.copy(rifleman.position);
@@ -2770,9 +2862,48 @@ const Game = (() => {
         blockAAGun(rifleman, _prevPos, false); // blocked by AA guns, takes no damage
         focus.copy(rifleman.position);
 
-        // Reveal timer (the "ghost" state): counts down each frame. Phase 2
-        // sets it when the player fires/throws and drives the SPOTTED warning.
+        // Sniper: hold LMB/Space. One round in the chamber; it reloads over
+        // SNIPER_RELOAD, so holding the trigger fires again once it is ready.
+        // Firing reveals the player (the "ghost" state ends).
+        sniperReload = Math.max(0, sniperReload - dt);
+        if (rifleman.alive && rc.firing && sniperReload <= 0) {
+          fireSniper();
+          sniperReload = SNIPER_RELOAD;
+          playerRevealTimer = PLAYER_REVEAL_TIME;
+        }
+
+        // Grenades: hold RMB/X. Finite ammo, earned by dealing damage. The
+        // throw reuses the Rockets pool with per-projectile physics.
+        grenadeFireCooldown -= dt;
+        if (rifleman.alive && rc.grenadeFiring && grenadeFireCooldown <= 0 && grenadeAmmo > 0) {
+          if (
+            rockets.fire(
+              rifleman,
+              rifleman.muzzleWorld(_muzzle),
+              rifleman.aimDir(_barrel),
+              "hard",
+              GRENADE_DAMAGE,
+              GRENADE_DAMAGE_MIN,
+              {
+                speed: GRENADE_SPEED,
+                life: GRENADE_LIFE,
+                blastRadius: GRENADE_BLAST_RADIUS,
+                fuseRadius: GRENADE_FUSE_RADIUS,
+              }
+            )
+          ) {
+            grenadeAmmo--;
+            grenadeFireCooldown = GRENADE_FIRE_INTERVAL;
+            playerRevealTimer = PLAYER_REVEAL_TIME;
+            EngineAudio.rocketLaunch(0); // throw whoosh; the dedicated sound lands in phase 4
+          }
+        }
         playerRevealTimer = Math.max(0, playerRevealTimer - dt);
+
+        // Ballistic computer (hitscan mode): draw the sniper's line + the
+        // impact marker, and call out an enemy in the 2 m hit radius (ZEROED).
+        const zeroed = ballistic.update(rifleman, terrain, ctx.units);
+        zeroedHint.classList.toggle("hidden", !zeroed);
       }
       perf.phase.player += performance.now() - _t; _t = performance.now();
 
@@ -2966,8 +3097,13 @@ const Game = (() => {
       // Tank vs tank: push apart + speed-based damage to both (M5).
       collideTanks(ctx.tanks);
 
-      // Tank vs rifleman: a moving tank runs over the infantry (M7).
-      runOverRiflemen(ctx.tanks, aliveRiflemen);
+      // Tank vs rifleman: a moving tank runs over the infantry (M7), the
+      // player rifleman included while active.
+      runOverRiflemen(
+        ctx.tanks,
+        aliveRiflemen,
+        vehicle === VEHICLE_RIFLEMAN ? rifleman : null
+      );
       perf.phase.collide += performance.now() - _t; _t = performance.now();
 
       if (state === "playing") {

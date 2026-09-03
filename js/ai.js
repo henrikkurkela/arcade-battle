@@ -11,6 +11,18 @@
 // `ctx` = { player, tanks, terrain } (built by main.js).
 // ---------------------------------------------------------------------------
 
+// --- Player rifleman stealth (phase 2) ----------------------------------------
+// The player rifleman is a pure ghost: while not revealed, no CPU unit targets
+// it. Firing / throwing reveals it for PLAYER_REVEAL_TIME and broadcasts its
+// position to CPU units within PLAYER_REVEAL_RADIUS. CPU riflemen additionally
+// have eyes (RIFLEMAN_PLAYER_EYE, always) and ears (RIFLEMAN_PLAYER_EAR, only
+// while revealed). The reveal state is published by main.js as
+// `ctx.playerRevealed` (+ `ctx.playerRifleman`, the unit itself).
+const RIFLEMAN_PLAYER_EYE = 70; // m; a CPU rifleman sees the player rifleman within this
+const RIFLEMAN_PLAYER_EAR = 400; // m; a revealed player rifleman is heard within this
+const PLAYER_REVEAL_RADIUS = 400; // m; the reveal reaches CPU units this close
+const PLAYER_REVEAL_TIME = 10; // s the player rifleman stays revealed after firing / throwing
+
 // --- Difficulty (M1) ----------------------------------------------------------
 // Per-difficulty AI tuning, chosen in the start / game-over menu. Error values
 // are in degrees; converted to radians at the fire sites (main.js). `AI` is the
@@ -205,9 +217,9 @@ class PlanePlayerController {
 // --- RiflemanPlayerController (rifleman vehicle) -----------------------------
 // On-foot controls: pointer-locked mouse aims the body (yaw) + rifle (pitch),
 // W/S walk forward/back (back at the walk pace), A/D turn in place, Shift
-// sprints. Left click / Space fires the sniper (phase 3); right click / X
-// throws a grenade (phase 3). The fire flags are produced here but only acted
-// on once the weapons land; phase 1 just walks, sprints, turns and aims.
+// sprints. Left click / Space fires the sniper; right click / X throws a
+// grenade. The fire flags are acted on in main.js (hitscan ray + the Rockets
+// pool with per-projectile grenade physics).
 class RiflemanPlayerController {
   constructor() {
     this.control = {
@@ -486,6 +498,18 @@ class TankAI {
     for (const p of ctx.tanks) if (p !== tank) consider(p);
     for (const p of ctx.riflemen) consider(p);
     for (const p of ctx.planes) consider(p);
+    // Player rifleman: a valid target ONLY while revealed, and only if the
+    // reveal reached this tank (within PLAYER_REVEAL_RADIUS).
+    if (ctx.playerRevealed) {
+      const p = ctx.playerRifleman;
+      if (p && p.alive) {
+        const d = tank.position.distanceTo(p.position);
+        if (d < PLAYER_REVEAL_RADIUS && d < bestD) {
+          bestD = d;
+          best = p;
+        }
+      }
+    }
     this.target = best;
   }
 }
@@ -662,6 +686,18 @@ class RiflemanAI {
     // rifleman AI.
     for (const p of ctx.tanks) consider(p);
     for (const p of ctx.planes) consider(p);
+    // Player rifleman: eyes — always a valid target within RIFLEMAN_PLAYER_EYE
+    // (the anti-camp rule); ears — while revealed, the shot is heard from
+    // RIFLEMAN_PLAYER_EAR.
+    const p = ctx.playerRifleman;
+    if (p && p.alive) {
+      const d = r.position.distanceTo(p.position);
+      const range = ctx.playerRevealed ? RIFLEMAN_PLAYER_EAR : RIFLEMAN_PLAYER_EYE;
+      if (d < range && d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
     this.target = best;
   }
 }
@@ -884,6 +920,18 @@ class PlaneAI {
     for (const p of ctx.planes) if (p !== plane) consider(p);
     for (const p of ctx.tanks) consider(p);
     for (const p of ctx.riflemen) consider(p);
+    // Player rifleman: a valid target ONLY while revealed, and only if the
+    // reveal reached this plane (within PLAYER_REVEAL_RADIUS).
+    if (ctx.playerRevealed) {
+      const p = ctx.playerRifleman;
+      if (p && p.alive) {
+        const d = plane.position.distanceTo(p.position);
+        if (d < PLAYER_REVEAL_RADIUS && d < bestD) {
+          bestD = d;
+          best = p;
+        }
+      }
+    }
     this.target = best;
   }
 }

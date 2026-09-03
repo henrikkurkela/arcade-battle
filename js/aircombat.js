@@ -2,7 +2,9 @@
 
 // ---------------------------------------------------------------------------
 // Aerial weapons (copied from the Arcade Plane game), shared by the CPU
-// planes and the AA guns.
+// planes, the AA guns, and the player rifleman's grenades (the Rockets pool
+// takes per-projectile physics, so the grenades fly slower with a smaller
+// blast and a shorter fuse).
 //
 // Projectiles: fast straight-line cannon tracers. SOFT damage.
 // Rockets:     arcing unguided ordnance with splash. HARD damage.
@@ -257,6 +259,12 @@ class Rockets {
         life: 0,
         damage: ROCKET_DAMAGE,
         damageMin: ROCKET_DAMAGE_MIN,
+        // Per-projectile flight physics (the rifleman's grenades share this
+        // pool with a slower throw, a smaller blast, and a shorter fuse).
+        speed: ROCKET_SPEED,
+        gravity: ROCKET_GRAVITY,
+        blastRadius: ROCKET_BLAST_RADIUS,
+        fuseRadius: ROCKET_FUSE_RADIUS,
         motor,
         motorMat,
       });
@@ -275,8 +283,11 @@ class Rockets {
 
   /** Launch one rocket. Drops it if the pool is full. Returns true if launched.
     *  `kind` is the damage kind ("hard" for rockets). `damage`/`damageMin`
-    *  override the base splash damage (difficulty); omit for the standard value. */
-  fire(owner, muzzleWorld, dir, kind = "hard", damage, damageMin) {
+    *  override the base splash damage (difficulty); omit for the standard value.
+    *  `opts` overrides the flight physics per projectile — the rifleman's
+    *  grenades share this pool (speed, gravity, life, blastRadius, fuseRadius);
+    *  omit for the standard rocket. */
+  fire(owner, muzzleWorld, dir, kind = "hard", damage, damageMin, opts) {
     for (let i = 0; i < this.pool.length; i++) {
       const e = this.pool[(this._nextFree + i) % this.pool.length];
       if (e.active) continue;
@@ -285,8 +296,14 @@ class Rockets {
       e.owner = owner;
       e.team = owner.team;
       e.pos.copy(muzzleWorld);
-      e.vel.copy(owner.velocity).addScaledVector(dir, ROCKET_SPEED);
-      e.life = ROCKET_LIFE;
+      e.speed = opts && opts.speed !== undefined ? opts.speed : ROCKET_SPEED;
+      e.gravity = opts && opts.gravity !== undefined ? opts.gravity : ROCKET_GRAVITY;
+      e.life = opts && opts.life !== undefined ? opts.life : ROCKET_LIFE;
+      e.blastRadius =
+        opts && opts.blastRadius !== undefined ? opts.blastRadius : ROCKET_BLAST_RADIUS;
+      e.fuseRadius =
+        opts && opts.fuseRadius !== undefined ? opts.fuseRadius : ROCKET_FUSE_RADIUS;
+      e.vel.copy(owner.velocity).addScaledVector(dir, e.speed);
       e.damage = damage ?? this.baseDamage;
       e.damageMin = damageMin ?? this.baseDamageMin;
       e.group.visible = true;
@@ -307,8 +324,8 @@ class Rockets {
       if (!u.alive) continue;
       if (u === e.owner || u.team === e.team) continue; // owner immunity
       const d = e.pos.distanceTo(u.position);
-      if (d > ROCKET_BLAST_RADIUS) continue;
-      const t = 1 - d / ROCKET_BLAST_RADIUS; // 1 at center -> 0 at edge
+      if (d > e.blastRadius) continue;
+      const t = 1 - d / e.blastRadius; // 1 at center -> 0 at edge
       const raw = Math.round(lerp(e.damageMin, e.damage, smoothstep(t)));
       const dealt = u.takeDamage(raw, "hard");
       if (dealt > 0 && this.onDamage) this.onDamage(e.owner, u, dealt);
@@ -321,8 +338,8 @@ class Rockets {
       for (const g of aaGuns) {
         if (g.disabled) continue;
         const d = e.pos.distanceTo(g.position);
-        if (d > ROCKET_BLAST_RADIUS) continue;
-        const t = 1 - d / ROCKET_BLAST_RADIUS;
+        if (d > e.blastRadius) continue;
+        const t = 1 - d / e.blastRadius;
         const raw = Math.round(lerp(e.damageMin, e.damage, smoothstep(t)));
         if (g.takeDamage(raw, "hard") && this.onAADisabled) this.onAADisabled(g);
       }
@@ -334,7 +351,7 @@ class Rockets {
   update(dt, units, terrain, aaGuns, onBoom) {
     for (const e of this.pool) {
       if (!e.active) continue;
-      e.vel.y -= ROCKET_GRAVITY * dt;
+      e.vel.y -= e.gravity * dt;
       e.pos.addScaledVector(e.vel, dt);
       e.life -= dt;
 
@@ -346,7 +363,7 @@ class Rockets {
         for (const u of units) {
           if (!u.alive) continue;
           if (u === e.owner || u.team === e.team) continue;
-          if (e.pos.distanceTo(u.position) < ROCKET_FUSE_RADIUS) {
+          if (e.pos.distanceTo(u.position) < e.fuseRadius) {
             detonate = true;
             break;
           }
@@ -356,7 +373,7 @@ class Rockets {
         if (!detonate && aaGuns) {
           for (const g of aaGuns) {
             if (g.disabled) continue;
-            if (e.pos.distanceTo(g.position) < ROCKET_BLAST_RADIUS) {
+            if (e.pos.distanceTo(g.position) < e.blastRadius) {
               detonate = true;
               break;
             }
