@@ -204,9 +204,11 @@ class PlaneChaseCamera {
 // Rifleman camera: two modes, toggled with 1 / 2 (rifleman only).
 //  - "shoulder" (default): over-the-shoulder, just behind and to the side of
 //    the head, looking down the rifle (the crosshair + ballistic line read).
-//  - "scope": a tight FOV from the eye, looking straight down the barrel; the
-//    line + ZEROED readout are the aiming tools. In v1 the scope is a zoom
-//    only — it does NOT lock movement (backlog).
+//  - "scope": a tight FOV from just in front of the face (outside the head
+//    and helmet, so aiming up never shows the helmet's unlit underside),
+//    looking straight down the barrel; the line + ZEROED readout are the
+//    aiming tools. In v1 the scope is a zoom only — it does NOT lock
+//    movement (backlog).
 // The soldier stays upright, so the camera up stays world-up (no banking).
 // ---------------------------------------------------------------------------
 
@@ -216,6 +218,10 @@ const RCAM_SHOULDER_UP = 0.15; // m above the head
 const RCAM_LOOK_AHEAD = 6; // m ahead along the aim (where the camera looks)
 const RCAM_FOV_SHOULDER = 70;
 const RCAM_FOV_SCOPE = 22; // tight zoom
+// The scope sits this far ahead of the head anchor, along the aim: far enough
+// to stay outside the head box and helmet for every aim pitch (-30..+60 deg),
+// so the model never crosses the scope view (the line of sight is unchanged).
+const RCAM_SCOPE_AHEAD = 0.35; // m
 
 class RiflemanChaseCamera {
   constructor(camera) {
@@ -279,12 +285,15 @@ class RiflemanChaseCamera {
     this._look.copy(this._head).addScaledVector(this._aim, RCAM_LOOK_AHEAD);
   }
 
-  /** Instant placement: scope sits at the eye, shoulder just behind it. */
+  /** Instant placement: scope just in front of the face (outside the head and
+   *  helmet), shoulder just behind it. */
   _place(rifleman) {
     rifleman.headWorld(this._head);
     rifleman.aimDir(this._aim);
     if (this.mode === "scope") {
-      this.camera.position.copy(this._head);
+      // Ahead of the head anchor, along the aim: the same line of sight, but
+      // outside the model, so the head/helmet can't cross the scope view.
+      this.camera.position.copy(this._head).addScaledVector(this._aim, RCAM_SCOPE_AHEAD);
     } else {
       this._right.crossVectors(this._aim, this._up).normalize();
       this.camera.position
