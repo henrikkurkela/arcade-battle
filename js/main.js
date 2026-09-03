@@ -1690,6 +1690,25 @@ const Game = (() => {
     playerRevealTimer = PLAYER_REVEAL_TIME;
   }
 
+  /** True while at least one CPU unit (tank, plane, or rifleman) is close enough
+   *  to actually spot the revealed player rifleman. The reveal only reaches
+   *  units within PLAYER_REVEAL_RADIUS (ai.js); AA guns never engage riflemen,
+   *  so they are excluded. */
+  function enemyCanSpotRifleman() {
+    const r2 = PLAYER_REVEAL_RADIUS * PLAYER_REVEAL_RADIUS;
+    const p = rifleman.position;
+    for (const slot of fleet) {
+      if (slot.tank.alive && slot.tank.position.distanceToSquared(p) < r2) return true;
+    }
+    for (const slot of planeFleet) {
+      if (slot.plane.alive && slot.plane.position.distanceToSquared(p) < r2) return true;
+    }
+    for (const slot of rifleFleet) {
+      if (slot.unit.alive && slot.unit.position.distanceToSquared(p) < r2) return true;
+    }
+    return false;
+  }
+
   // --- Smoke ------------------------------------------------------------------
   // One burst of `THREE.Points` particles (the plane's spawnSmoke pattern).
   function spawnSmoke(pos, o = {}) {
@@ -2464,9 +2483,11 @@ const Game = (() => {
       // Grenade count (red while empty; no "∞" case for the rifleman).
       hudGrenades.textContent = grenadeAmmo;
       hudGrenades.classList.toggle("empty", grenadeAmmo === 0);
-      // SPOTTED warning: the reveal timer is running (you fired / threw).
-      // A beep the moment it appears, like STALL / OVERHEAT.
-      const isSpotted = state === "playing" && playerRevealTimer > 0;
+      // SPOTTED warning: the reveal timer is running (you fired / threw) AND a
+      // CPU unit is close enough to actually spot you (the reveal only reaches
+      // PLAYER_REVEAL_RADIUS). A beep the moment it appears, like STALL / OVERHEAT.
+      const isSpotted =
+        state === "playing" && playerRevealTimer > 0 && enemyCanSpotRifleman();
       spotted.classList.toggle("hidden", !isSpotted);
       if (isSpotted) spottedTime.textContent = Math.ceil(playerRevealTimer);
       if (isSpotted && !spottedWarned) EngineAudio.warnBeep();
