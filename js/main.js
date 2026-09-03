@@ -181,6 +181,7 @@ const Game = (() => {
   // Rifleman weapons + stealth (the player is the third vehicle, the "hunter").
   // The stealth tuning (reveal time / radius, rifleman eyes / ears) lives in
   // ai.js with the target-selection code that reads it.
+  const PLAYER_RIFLEMAN_HP = 100; // the player is tougher than the CPU squad (40)
   const SNIPER_RELOAD = 3; // s to reload the one round in the chamber
   const SNIPER_DAMAGE = 40; // HARD damage per sniper round (floored by armor)
   const SNIPER_RANGE = 800; // m; the hitscan ray's max range
@@ -669,7 +670,7 @@ const Game = (() => {
     plane = new Plane(scene);
     plane.team = "player";
     plane.callsign = "YOU";
-    rifleman = new Rifleman(scene, { uniform: RIFLEMAN_UNIFORMS[0] });
+    rifleman = new Rifleman(scene, { uniform: RIFLEMAN_UNIFORMS[0], hp: PLAYER_RIFLEMAN_HP });
     rifleman.team = "player";
     rifleman.callsign = "YOU";
     chaseCam = new ChaseCamera(camera);

@@ -160,8 +160,8 @@ when the plane's STALL warning or the rifleman's SPOTTED warning appears.
   ghost: no CPU unit targets you (tanks, planes, and riflemen hunt each other
   as usual; AA guns never engage you). Firing the sniper or throwing a grenade
   reveals you for 10 s (a SPOTTED warning with a beep and a message-feed line
-  while the timer runs): tanks and planes may then target you at their normal
-  engage ranges, and CPU riflemen within 400 m come in ("they heard the shot").
+  while the timer runs): tanks and planes may then target you (the reveal
+  reaches 400 m), and CPU riflemen within 400 m come in ("they heard the shot").
   Independent of the reveal, any CPU rifleman within 70 m sees you (the
   anti-camp rule — no spot is safe forever).
 - **Rifleman — sniper + grenades:** the sniper is hitscan — an instant ray
@@ -215,7 +215,8 @@ when the plane's STALL warning or the rifleman's SPOTTED warning appears.
   landing on it (wheels down, level-ish, gentle sink) restores your HP to full
   (a "LANDED — HP RESTORED" hint shows); a hard landing or a crash into the
   ground/scenery destroys you. In the rifleman, walk onto the pad and your HP
-  climbs 20/s back to full (the same hint) — your safe house between hunts.
+  climbs 20/s back to full (a "GARAGE — HEALING" hint shows) — your safe house
+  between hunts.
 - **Day / night:** the TIME toggle on the title screen switches between day
   and night (the sky, fog, lights, clouds, and horizon fade all ease over
   ~1 s). Night brings a dark sky with procedural stars, dim moonlight,

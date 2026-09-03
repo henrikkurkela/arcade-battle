@@ -16,7 +16,7 @@
 // (a soldier can pivot, a tank cannot).
 // ---------------------------------------------------------------------------
 
-const RIFLEMAN_HP = 40;
+const RIFLEMAN_HP = 40; // CPU squad (the player carries more — main.js passes hp)
 const RIFLEMAN_SOFT_ARMOR = 1; // no armor: full small-arms damage
 const RIFLEMAN_HARD_ARMOR = 1; // no armor: full main-gun damage
 const RIFLEMAN_SPEED = 5; // m/s on foot (walk pace; also the reverse pace)
@@ -51,7 +51,8 @@ class Rifleman {
     this.hullRoll = 0;
 
     // Combat state (same shape as Tank, so the shared weapon pools work).
-    this.hp = this.maxHp = RIFLEMAN_HP;
+    // opts.hp overrides the squad default (the player rifleman carries more).
+    this.hp = this.maxHp = opts.hp ?? RIFLEMAN_HP;
     this.alive = true;
     this.team = "riflemen"; // one shared team: no friendly fire in the squad
     this.callsign = "RIFLEMAN";
