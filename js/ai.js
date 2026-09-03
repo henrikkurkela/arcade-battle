@@ -582,7 +582,12 @@ class RiflemanAI {
     if (engaging) {
       dist = r.position.distanceTo(t.position);
       this._toTgt.copy(t.position).sub(r.position).normalize();
-      if (dist < RIFLEMAN_HOLD_RANGE) {
+      // Backing off is for tanks (a soldier won't walk into the tracks).
+      // Against the player rifleman (infantry) hold at firing range and fight
+      // instead: the target is only acquired at eye range (70 m), which is
+      // inside the hold range (110 m), so without this the CPU would spot the
+      // player and flee without ever firing.
+      if (dist < RIFLEMAN_HOLD_RANGE && t !== ctx.playerRifleman) {
         this.backingOff = true;
         this._aim.copy(r.position).addScaledVector(this._toTgt, -60);
         c.throttle = 1;
