@@ -102,8 +102,8 @@ when the plane's STALL warning or the rifleman's SPOTTED warning appears.
      unlimited rockets at +50% damage, but heavier and slower), and
      **Dogfighter** (no rockets, the cannon overheats 2x slower, but more
      agile and faster).
-  - *Rifleman:* a single **Standard** loadout (the hitscan sniper + grenades,
-     with the ballistic computer in hitscan mode).
+   - *Rifleman:* a single **AT Sniper** loadout (the hitscan sniper + grenades,
+      with the ballistic computer in hitscan mode).
 - **Title screen:** the world idles behind the overlay (engine ticking over).
    Set the counts with the title-screen controls — TANKS (CPU tanks, 0–16,
    four by default; 0 = "NO TANKS"), RIFLEMEN (0–16, four by default;

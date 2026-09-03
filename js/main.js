@@ -255,7 +255,7 @@ const Game = (() => {
         agility: 1.1, speed: 1.1 },
     ],
     rifleman: [
-      { id: "standard", name: "STANDARD", desc: "A hitscan sniper and a handful of grenades. Stay on your toes.",
+      { id: "atsniper", name: "AT SNIPER", desc: "A hitscan sniper and a handful of grenades. Stay on your toes.",
         ballisticComputer: true },
     ],
   };
@@ -549,7 +549,7 @@ const Game = (() => {
   let vehicle = VEHICLE_TANK; // selected vehicle (persisted)
   let tankLoadout = "standard"; // selected tank loadout (persisted)
   let planeLoadout = "standard"; // selected plane loadout (persisted)
-  let riflemanLoadout = "standard"; // selected rifleman loadout (persisted)
+  let riflemanLoadout = "atsniper"; // selected rifleman loadout (persisted)
   let difficulty = "normal"; // selected difficulty tier (persisted)
   // Effective loadout values for the ACTIVE vehicle, set by applyLoadout().
   // Only the active vehicle's fire sites read these.
@@ -2143,7 +2143,7 @@ const Game = (() => {
   planeLoadout = LOADOUTS.plane.some((l) => l.id === savedSettings.planeLoadout)
     ? savedSettings.planeLoadout : "standard";
   riflemanLoadout = LOADOUTS.rifleman.some((l) => l.id === savedSettings.riflemanLoadout)
-    ? savedSettings.riflemanLoadout : "standard";
+    ? savedSettings.riflemanLoadout : "atsniper";
   difficulty =
     savedSettings.difficulty === "easy" || savedSettings.difficulty === "hard"
       ? savedSettings.difficulty : "normal";
