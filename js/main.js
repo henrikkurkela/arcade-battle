@@ -187,12 +187,9 @@ const Game = (() => {
   const SNIPER_HIT_RADIUS = 2; // m; a unit whose center is this close to the ray is hit
   const GRENADE_START = 4; // grenades held at the start of a run
   const GRENADE_MAX = 6; // grenade cap (earned back by dealing damage)
-  const GRENADE_DAMAGE = 40; // HARD at the blast center
-  const GRENADE_DAMAGE_MIN = 15; // HARD at the blast edge
-  const GRENADE_BLAST_RADIUS = 8; // m
-  const GRENADE_SPEED = 20; // m/s throw speed (~40 m range at 45 deg)
-  const GRENADE_LIFE = 5; // s fuse backstop (it also detonates on ground contact)
-  const GRENADE_FUSE_RADIUS = 2; // m; proximity stand-off (detonates near a unit)
+  // The grenade's physics + splash damage (GRENADE_SPEED, GRENADE_LIFE,
+  // GRENADE_BLAST_RADIUS, GRENADE_FUSE_RADIUS, GRENADE_DAMAGE,
+  // GRENADE_DAMAGE_MIN) live with the Grenades pool in aircombat.js.
   const GRENADE_FIRE_INTERVAL = 0.5; // s between throws
   const GRENADE_DAMAGE_PER_GRENADE = 100; // damage dealt (sniper or grenade) to earn 1
   // Plane player weapons (ported from the Arcade Plane game). SOFT damage: a
@@ -588,6 +585,7 @@ const Game = (() => {
   let shells = null;
   let projectiles = null; // M8: pooled plane/AA cannon tracers (SOFT)
   let rockets = null; // M8: pooled plane/AA rockets (HARD)
+  let grenades = null; // M8: pooled rifleman grenades (HARD, spherical)
   let aaGuns = null; // M8: the fixed ring of AA turrets
   let aaSmokeTimer = 0; // throttles the continuous smoke from disabled AA guns
   let debris = null; // M5: pooled tank-shaped wreck pieces
@@ -685,16 +683,17 @@ const Game = (() => {
     shells = new Shells(scene);
     projectiles = new Projectiles(scene);
     rockets = new Rockets(scene);
+    grenades = new Grenades(scene);
     debris = new Debris(scene);
     flashes = new MuzzleFlashes(scene);
     destruction = new Destruction({
       scene, terrain, camera: chaseCam, audio: EngineAudio, spawnSmoke, debris,
     });
     ballistic = new BallisticComputer(scene);
-    // All four weapon pools share the same kill/damage attribution. The pools
+    // All five weapon pools share the same kill/damage attribution. The pools
     // are target-agnostic (any weapon can hit any unit or AA gun); which units
     // an AI *aims at* is decided by the AI, not by these callbacks.
-    for (const pool of [tracers, shells, projectiles, rockets]) {
+    for (const pool of [tracers, shells, projectiles, rockets, grenades]) {
       pool.onKill = handleKill;
       pool.onDamage = recordDamage;
       pool.onAADisabled = aaKnockOut;
@@ -877,6 +876,7 @@ const Game = (() => {
     shells.clear();
     projectiles.clear();
     rockets.clear();
+    grenades.clear();
     aaGuns.reset();
     aaSmokeTimer = 0;
     debris.clear();
@@ -2637,6 +2637,7 @@ const Game = (() => {
     if (shells) fx += countActive(shells.pool);
     if (projectiles) fx += countActive(projectiles.pool);
     if (rockets) fx += countActive(rockets.pool);
+    if (grenades) fx += countActive(grenades.pool);
     if (debris)
       fx +=
         countActive(debris.pool) +
@@ -2711,6 +2712,7 @@ const Game = (() => {
     if (shells) fx += countActive(shells.pool);
     if (projectiles) fx += countActive(projectiles.pool);
     if (rockets) fx += countActive(rockets.pool);
+    if (grenades) fx += countActive(grenades.pool);
     if (debris)
       fx +=
         countActive(debris.pool) +
@@ -2917,23 +2919,18 @@ const Game = (() => {
         }
 
         // Grenades: hold RMB/X. Finite ammo, earned by dealing damage. The
-        // throw reuses the Rockets pool with per-projectile physics.
+        // throw uses the dedicated Grenades pool (a spherical projectile, not
+        // the rocket's cylinder).
         grenadeFireCooldown -= dt;
         if (rifleman.alive && rc.grenadeFiring && grenadeFireCooldown <= 0 && grenadeAmmo > 0) {
           if (
-            rockets.fire(
+            grenades.fire(
               rifleman,
               rifleman.muzzleWorld(_muzzle),
               rifleman.aimDir(_barrel),
               "hard",
               GRENADE_DAMAGE,
-              GRENADE_DAMAGE_MIN,
-              {
-                speed: GRENADE_SPEED,
-                life: GRENADE_LIFE,
-                blastRadius: GRENADE_BLAST_RADIUS,
-                fuseRadius: GRENADE_FUSE_RADIUS,
-              }
+              GRENADE_DAMAGE_MIN
             )
           ) {
             grenadeAmmo--;
@@ -3174,6 +3171,16 @@ const Game = (() => {
           spawnSmoke(pos, {
             count: 26, size: 2.6, color: 0x3a3a3a, opacity: 0.85, life: 1.4,
             sx: 2.5, sy: 1.5, sz: 2.5, vh: 9, vyLo: 1, vyHi: 5,
+          });
+        });
+
+        // Grenades (rifleman): integrate (arc), detonate (splash), boom.
+        grenades.update(dt, ctx.units, terrain, aaGuns.guns, (pos) => {
+          EngineAudio.shellBoom(pos.distanceTo(player.position));
+          flashes.flash(pos);
+          spawnSmoke(pos, {
+            count: 16, size: 1.8, color: 0x3a3a3a, opacity: 0.8, life: 1.1,
+            sx: 1.8, sy: 1.1, sz: 1.8, vh: 7, vyLo: 1, vyHi: 4,
           });
         });
 

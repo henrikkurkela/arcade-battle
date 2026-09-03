@@ -406,3 +406,196 @@ class Rockets {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Grenades (HARD): the rifleman's hand-thrown ordnance — a distinct weapon
+// type from the rocket. A slow, short-fuse arcing ball with a small blast,
+// rendered as a tumbling olive sphere (not the rocket's cylinder + motor).
+// It shares the rocket's splash model (distance falloff, owner immunity,
+// AA-gun splash) but flies a hand-throw arc and detonates on proximity,
+// ground impact, or fuse timeout.
+// ---------------------------------------------------------------------------
+
+const GRENADE_SPEED = 20; // m/s throw speed (~40 m range at 45 deg)
+const GRENADE_LIFE = 5; // s fuse backstop (also detonates on ground contact)
+const GRENADE_GRAVITY = 9.8; // m/s^2 (arcs the throw)
+const GRENADE_FUSE_RADIUS = 2; // m; proximity stand-off (detonates near a unit)
+const GRENADE_BLAST_RADIUS = 8; // m; splash damage radius
+const GRENADE_DAMAGE = 40; // HP at the blast center
+const GRENADE_DAMAGE_MIN = 15; // HP at the blast edge
+const GRENADE_POOL_SIZE = 32; // pooled grenades (the rifleman's throws)
+
+class Grenades {
+  constructor(scene, poolSize = GRENADE_POOL_SIZE) {
+    this.pool = [];
+    this._nextFree = 0;
+    // Body: an olive sphere with a metallic equatorial band — it reads as a
+    // hand grenade (not the rocket's cylinder), and the band makes the tumble
+    // visible.
+    const bodyGeo = new THREE.SphereGeometry(0.22, 12, 10);
+    const bodyMat = new THREE.MeshLambertMaterial({ color: 0x4a5240 });
+    const bandGeo = new THREE.TorusGeometry(0.22, 0.035, 6, 16).rotateX(Math.PI / 2);
+    const bandMat = new THREE.MeshLambertMaterial({ color: 0x6b6f73 });
+    for (let i = 0; i < poolSize; i++) {
+      const group = new THREE.Group();
+      const body = new THREE.Mesh(bodyGeo, bodyMat);
+      body.castShadow = true;
+      const band = new THREE.Mesh(bandGeo, bandMat);
+      band.castShadow = true;
+      group.add(body, band);
+      group.visible = false;
+      scene.add(group);
+      this.pool.push({
+        group,
+        active: false,
+        pos: new THREE.Vector3(),
+        vel: new THREE.Vector3(),
+        owner: null,
+        team: "",
+        life: 0,
+        damage: GRENADE_DAMAGE,
+        damageMin: GRENADE_DAMAGE_MIN,
+        // Per-projectile flight physics (a hand throw: slow, short fuse, small
+        // blast). Overridable per shot via fire()'s opts.
+        speed: GRENADE_SPEED,
+        gravity: GRENADE_GRAVITY,
+        blastRadius: GRENADE_BLAST_RADIUS,
+        fuseRadius: GRENADE_FUSE_RADIUS,
+        // Tumble: a random spin axis + rate so the band reads as a rolling ball.
+        spinAxis: new THREE.Vector3(0, 1, 0),
+        spinRate: 0,
+      });
+    }
+    // Base splash damage, exposed so main.js can scale it and pass into fire().
+    this.baseDamage = GRENADE_DAMAGE;
+    this.baseDamageMin = GRENADE_DAMAGE_MIN;
+    // Set by main.js: (owner, victim, dealt) => void, called on every splash hit.
+    this.onDamage = null;
+    // Set by main.js: (owner, victim) => void, called on a lethal splash hit.
+    this.onKill = null;
+    // Set by main.js: (gun) => void, called when a grenade knocks out an AA gun.
+    this.onAADisabled = null;
+    // Scratch quaternion for the tumble (no per-shot allocation).
+    this._spinQ = new THREE.Quaternion();
+  }
+
+  /** Throw one grenade. Drops it if the pool is full. Returns true if thrown.
+    *  `kind` is the damage kind ("hard"). `damage`/`damageMin` override the
+    *  base splash; `opts` overrides the flight physics per shot (speed, gravity,
+    *  life, blastRadius, fuseRadius); omit for the standard grenade. */
+  fire(owner, muzzleWorld, dir, kind = "hard", damage, damageMin, opts) {
+    for (let i = 0; i < this.pool.length; i++) {
+      const e = this.pool[(this._nextFree + i) % this.pool.length];
+      if (e.active) continue;
+      this._nextFree = (this._nextFree + i + 1) % this.pool.length;
+      e.active = true;
+      e.owner = owner;
+      e.team = owner.team;
+      e.pos.copy(muzzleWorld);
+      e.speed = opts && opts.speed !== undefined ? opts.speed : GRENADE_SPEED;
+      e.gravity = opts && opts.gravity !== undefined ? opts.gravity : GRENADE_GRAVITY;
+      e.life = opts && opts.life !== undefined ? opts.life : GRENADE_LIFE;
+      e.blastRadius =
+        opts && opts.blastRadius !== undefined ? opts.blastRadius : GRENADE_BLAST_RADIUS;
+      e.fuseRadius =
+        opts && opts.fuseRadius !== undefined ? opts.fuseRadius : GRENADE_FUSE_RADIUS;
+      e.vel.copy(owner.velocity).addScaledVector(dir, e.speed);
+      e.damage = damage ?? this.baseDamage;
+      e.damageMin = damageMin ?? this.baseDamageMin;
+      e.group.visible = true;
+      e.group.position.copy(e.pos);
+      e.group.quaternion.identity();
+      // Random tumble so the band reads as a rolling ball.
+      e.spinAxis.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+      e.spinRate = 4 + Math.random() * 6;
+      return true;
+    }
+    return false;
+  }
+
+  /** Detonate: splash damage to every unit in the blast radius (with falloff),
+    *  skipping the shooter (owner immunity), plus any AA guns in the blast.
+    *  Calls `onBoom(pos, hitCount)`. */
+  _detonate(e, units, aaGuns, onBoom) {
+    let hitCount = 0;
+    for (const u of units) {
+      if (!u.alive) continue;
+      if (u === e.owner || u.team === e.team) continue; // owner immunity
+      const d = e.pos.distanceTo(u.position);
+      if (d > e.blastRadius) continue;
+      const t = 1 - d / e.blastRadius; // 1 at center -> 0 at edge
+      const raw = Math.round(lerp(e.damageMin, e.damage, smoothstep(t)));
+      const dealt = u.takeDamage(raw, "hard");
+      if (dealt > 0 && this.onDamage) this.onDamage(e.owner, u, dealt);
+      if (dealt > 0 && u.hp <= 0 && this.onKill) this.onKill(e.owner, u);
+      hitCount++;
+    }
+    // AA guns in the blast take the same falloff splash (no score).
+    // AA team grenades never damage AA guns (no friendly fire).
+    if (aaGuns && e.team !== "aa") {
+      for (const g of aaGuns) {
+        if (g.disabled) continue;
+        const d = e.pos.distanceTo(g.position);
+        if (d > e.blastRadius) continue;
+        const t = 1 - d / e.blastRadius;
+        const raw = Math.round(lerp(e.damageMin, e.damage, smoothstep(t)));
+        if (g.takeDamage(raw, "hard") && this.onAADisabled) this.onAADisabled(g);
+      }
+    }
+    if (onBoom) onBoom(e.pos, hitCount);
+  }
+
+  /** Integrate (gravity) + proximity/ground/fuse detonation + tumble. */
+  update(dt, units, terrain, aaGuns, onBoom) {
+    for (const e of this.pool) {
+      if (!e.active) continue;
+      e.vel.y -= e.gravity * dt;
+      e.pos.addScaledVector(e.vel, dt);
+      e.life -= dt;
+
+      let detonate = e.life <= 0 || e.pos.y < terrain.heightAt(e.pos.x, e.pos.z);
+      if (!detonate) {
+        // Proximity fuse: detonate when a hittable unit is within the stand-off
+        // radius (smaller than the blast, so a direct hit lands near the blast
+        // center rather than at its edge).
+        for (const u of units) {
+          if (!u.alive) continue;
+          if (u === e.owner || u.team === e.team) continue;
+          if (e.pos.distanceTo(u.position) < e.fuseRadius) {
+            detonate = true;
+            break;
+          }
+        }
+        // ...or when an AA gun is within the blast (a grenade that misses the
+        // units but lands on a gun still knocks it out).
+        if (!detonate && aaGuns) {
+          for (const g of aaGuns) {
+            if (g.disabled) continue;
+            if (e.pos.distanceTo(g.position) < e.blastRadius) {
+              detonate = true;
+              break;
+            }
+          }
+        }
+      }
+      if (detonate) {
+        this._detonate(e, units, aaGuns, onBoom);
+        e.active = false;
+        e.group.visible = false;
+        continue;
+      }
+      e.group.position.copy(e.pos);
+      // Tumble: rotate the body about its random spin axis (the band reads).
+      this._spinQ.setFromAxisAngle(e.spinAxis, e.spinRate * dt);
+      e.group.quaternion.premultiply(this._spinQ);
+    }
+  }
+
+  /** Deactivate everything (used on restart). */
+  clear() {
+    for (const e of this.pool) {
+      e.active = false;
+      e.group.visible = false;
+    }
+  }
+}
