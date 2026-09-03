@@ -925,7 +925,7 @@ const Game = (() => {
     if (isPlane) spawnPlayerPlane();
     else if (isRifle) spawnPlayerRifleman();
     else spawnPlayerTank();
-    EngineAudio.setEngineMode(isPlane ? "prop" : "diesel");
+    EngineAudio.setEngineMode(isPlane ? "prop" : isRifle ? "footsteps" : "diesel");
     // Per-vehicle HUD rows: altitude/throttle/rockets (plane), shell (tank),
     // sniper/grenades (rifleman).
     hudAltRow.classList.toggle("hidden", !isPlane);

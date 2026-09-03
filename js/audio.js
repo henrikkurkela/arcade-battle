@@ -7,7 +7,9 @@
 // through a lowpass, plus a looped white-noise bed through a bandpass. Both
 // feed an engine gain -> SFX gain -> master gain -> output, and scale with
 // the player's throttle and speed (throttle alone can rev the engine at a
-// standstill). It idles on the title screen.
+// standstill). It idles on the title screen. The rifleman has no engine:
+// instead, footstep thuds fire on a phase that mirrors the leg-swing
+// animation, so the pace (and volume) tracks the walking speed.
 //
 // One-shot effects (MG report, shell launch, explosion, crash, warning beep)
 // are short oscillator/noise bursts through filters, distance-scaled so
@@ -31,6 +33,10 @@ const EngineAudio = (() => {
   const PROP_BLADES = 2;
   const PROP_RPM_EASE = 2.2; // rpm easing rate (per second)
 
+  // --- Footstep tuning (rifleman vehicle) ------------------------------------
+  const FOOTSTEP_FREQ = 1.8; // leg-swing radians per meter (mirrors WALK_FREQ in rifleman.js)
+  const FOOTSTEP_MIN_SPEED = 0.25; // m/s; below this the soldier is standing still
+
   const MASTER_VOL = 0.4;
 
   let ctx = null;
@@ -47,7 +53,9 @@ const EngineAudio = (() => {
   let muted = false;
   let sfxVol = 1; // user SFX volume, 0..1 (engine + one-shot effects)
   let started = false;
-  let engineMode = "diesel"; // "diesel" (tank) or "prop" (plane)
+  let engineMode = "diesel"; // "diesel" (tank), "prop" (plane) or "footsteps" (rifleman)
+  let stepPhase = 0; // radians of leg swing (mirrors Rifleman._walkPhase)
+  let stepHalf = 0; // last half-swing index a footstep fired at
   let propGain = null;
   let propOsc1 = null;
   let propOsc2 = null;
@@ -196,11 +204,12 @@ const EngineAudio = (() => {
     if (ctx.state === "suspended") ctx.resume();
   }
 
-  /** Per-frame update: the active engine voice scales with throttle and
-   *  speed (diesel for the tank, prop for the plane). `unit` is the player's
-   *  vehicle; `state` is the game state string; `throttle` is the player's
-   *  throttle input (-1..1 for the tank, 0..1 for the plane; 0 outside of
-   *  playing). */
+  /** Per-frame update: the active voice scales with throttle and speed
+    *  (diesel for the tank, prop for the plane, footstep thuds for the
+    *  rifleman). `unit` is the player's vehicle; `state` is the game state
+    *  string; `throttle` is the player's throttle input (-1..1 for the tank,
+    *  0..1 for the plane; 0 outside of playing; the rifleman's voice uses
+    *  the unit's speed instead). */
   function update(dt, unit, state, throttle) {
     if (!started) return;
 
@@ -227,6 +236,28 @@ const EngineAudio = (() => {
       bandpass.frequency.value = 100 + engineFreq * 2.5;
       engineGain.gain.value = easeToward(engineGain.gain.value, targetGain, ENGINE_EASE, dt);
       propGain.gain.value = easeToward(propGain.gain.value, 0, PROP_RPM_EASE, dt);
+    } else if (engineMode === "footsteps") {
+      // A soldier has no engine: both engine voices ease to silence, and the
+      // only sound is a footstep thud on each half-swing while moving.
+      engineGain.gain.value = easeToward(engineGain.gain.value, 0, ENGINE_EASE, dt);
+      propGain.gain.value = easeToward(propGain.gain.value, 0, PROP_RPM_EASE, dt);
+
+      if (state === "playing" && unit) {
+        const speed = Math.abs(unit.speed);
+        if (speed > FOOTSTEP_MIN_SPEED) {
+          stepPhase += speed * FOOTSTEP_FREQ * dt;
+          const half = Math.floor(stepPhase / Math.PI);
+          if (half > stepHalf) {
+            stepHalf = half;
+            // Sprinting reads louder than a walk.
+            footstep(clamp(speed * 0.11, 0.15, 0.9));
+          }
+          if (half >= 2) {
+            stepPhase -= TAU; // keep the accumulator small (two swings per wrap)
+            stepHalf -= 2;
+          }
+        }
+      }
     } else {
       let targetRpm = 0;
       let targetGain = 0;
@@ -250,10 +281,14 @@ const EngineAudio = (() => {
     }
   }
 
-  /** Select the engine voice: "diesel" (tank) or "prop" (plane). The
-   *  inactive voice eases to silence on the next update(). */
+  /** Select the engine voice: "diesel" (tank), "prop" (plane) or
+    *  "footsteps" (rifleman). The inactive voices ease to silence on the
+    *  next update(); the step phase resets so the first footfall lands on
+    *  the animation's next foot strike. */
   function setEngineMode(mode) {
-    engineMode = mode === "prop" ? "prop" : "diesel";
+    engineMode = mode === "prop" ? "prop" : mode === "footsteps" ? "footsteps" : "diesel";
+    stepPhase = 0;
+    stepHalf = 0;
   }
 
   /** One-shot MG report: a short falling-bandpass noise crack plus a low
@@ -488,9 +523,48 @@ const EngineAudio = (() => {
     osc.stop(t0 + 0.55);
   }
 
+  /** One-shot footstep (rifleman): a short lowpassed noise thud (the boot
+    *  striking the ground) plus a small low thump (the heel). `vol` scales
+    *  with the pace (sprinting is louder than a walk). A little random
+    *  detune keeps the steps from reading as a machine gun. Fired by
+    *  update() on each half-swing of the leg phase. */
+  function footstep(vol) {
+    if (!started) return;
+    const t0 = ctx.currentTime;
+
+    // --- thud: short noise burst through a falling lowpass ------------------
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuf;
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.setValueAtTime(420 + Math.random() * 160, t0);
+    lp.frequency.exponentialRampToValueAtTime(110, t0 + 0.07);
+    const gn = ctx.createGain();
+    gn.gain.setValueAtTime(0.55 * vol, t0);
+    gn.gain.exponentialRampToValueAtTime(0.001, t0 + 0.09);
+    noise.connect(lp);
+    lp.connect(gn);
+    gn.connect(sfxGain);
+    noise.start(t0);
+    noise.stop(t0 + 0.12);
+
+    // --- thump: low sine with a fast pitch drop (the heel) -------------------
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(85 + Math.random() * 25, t0);
+    osc.frequency.exponentialRampToValueAtTime(38, t0 + 0.06);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.35 * vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.08);
+    osc.connect(g);
+    g.connect(sfxGain);
+    osc.start(t0);
+    osc.stop(t0 + 0.1);
+  }
+
   /** One-shot sniper crack (rifleman): a very short, sharp noise burst plus a
-   *  low thump. `dist` = meters from the listener (player); close shots are
-   *  louder and sharper, distant ones duller. */
+    *  low thump. `dist` = meters from the listener (player); close shots are
+    *  louder and sharper, distant ones duller. */
   function sniperShot(dist = 0) {
     if (!started) return;
     const t0 = ctx.currentTime;

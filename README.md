@@ -428,7 +428,9 @@ when the plane's STALL warning or the rifleman's SPOTTED warning appears.
 - `js/audio.js` — synthesized engine audio (diesel rumble for the tank from a
   low sawtooth/triangle pair and filtered noise; a propeller "thump" and
   "whoosh" for the plane; the pitch and volume scale with throttle and speed,
-  and the engine ticks over on the title screen), distance-scaled MG/cannon
+  and the engine ticks over on the title screen; the rifleman has no engine —
+  just footstep thuds whose rate and volume track the walking pace, fired on
+  the leg-swing phase so they land on the footfalls), distance-scaled MG/cannon
   reports, shell/rocket launch and explosion sounds, a sharp distance-scaled
   sniper crack (louder and sharper up close), a grenade throw whoosh, a small
   reload click, a tree thud, a deep long boom for the special destruction
