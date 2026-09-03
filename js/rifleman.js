@@ -58,6 +58,7 @@ class Rifleman {
     this.callsign = "RIFLEMAN";
     this.softArmor = RIFLEMAN_SOFT_ARMOR;
     this.hardArmor = RIFLEMAN_HARD_ARMOR;
+    this.sprintMul = 1; // loadout sprint multiplier (PIONEER: 1.125)
 
     // Scratch objects (avoid per-frame allocations).
     this._fwd = new THREE.Vector3();
@@ -163,7 +164,7 @@ class Rifleman {
     // reverse is at the walk pace (a soldier backs up slowly).
     const maxSpeed =
       throttleIn >= 0
-        ? (sprinting ? RIFLEMAN_SPRINT_SPEED : RIFLEMAN_SPEED)
+        ? (sprinting ? RIFLEMAN_SPRINT_SPEED * this.sprintMul : RIFLEMAN_SPEED)
         : RIFLEMAN_SPEED;
     const target = throttleIn * maxSpeed;
     if (this.speed < target) this.speed = Math.min(target, this.speed + RIFLEMAN_ACCEL * dt);

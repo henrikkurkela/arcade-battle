@@ -26,8 +26,8 @@
             <div class="hud-row" id="hud-score-row">SCORE <span class="v" id="hud-score">0</span></div>
             <div class="hud-row" id="hud-shell-row">SHELL <span class="v" id="hud-shell">READY</span></div>
             <div class="hud-row hidden" id="hud-rockets-row">ROCKETS <span class="v" id="hud-rockets">6</span></div>
-            <div class="hud-row hidden" id="hud-sniper-row">SNIPER <span class="v" id="hud-sniper">READY</span></div>
-            <div class="hud-row hidden" id="hud-grenades-row">GRENADES <span class="v" id="hud-grenades">4</span></div>
+            <div class="hud-row hidden" id="hud-sniper-row"><span id="hud-sniper-label">SNIPER</span> <span class="v" id="hud-sniper">READY</span></div>
+            <div class="hud-row hidden" id="hud-grenades-row"><span id="hud-grenades-label">GRENADES</span> <span class="v" id="hud-grenades">4</span></div>
           </div>
           <div class="hud-box right" id="tank-hints">
             <div>W / &uarr; throttle &nbsp;&middot;&nbsp; S / &darr; reverse</div>
@@ -46,7 +46,7 @@
           <div class="hud-box right hidden" id="rifleman-hints">
             <div>W / &uarr; walk &nbsp;&middot;&nbsp; S / &darr; back &nbsp;&middot;&nbsp; SHIFT sprint</div>
             <div>A / &larr; , D / &rarr; turn &nbsp;&middot;&nbsp; MOUSE aim (body + rifle)</div>
-            <div>LEFT CLICK / SPACE sniper &nbsp;&middot;&nbsp; RIGHT CLICK / X grenade</div>
+            <div id="rifleman-fire-hint">LEFT CLICK / SPACE sniper &nbsp;&middot;&nbsp; RIGHT CLICK / X grenade</div>
             <div>P pause &nbsp;&middot;&nbsp; R restart &nbsp;&middot;&nbsp; M mute &nbsp;&middot;&nbsp; H fps &nbsp;&middot;&nbsp; 1 / 2 camera (shoulder / scope)</div>
           </div>
           <div id="crosshair"></div>

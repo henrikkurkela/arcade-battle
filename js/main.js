@@ -264,7 +264,28 @@ const Game = (() => {
     rifleman: [
       { id: "atsniper", name: "AT SNIPER",
         blurb: "You&rsquo;re a lone rifleman &mdash; the hunter, and always the hunted.<br />A hitscan sniper and a handful of grenades. Stay on your toes:<br />invisible until you fire, then hunted for 10s.",
-        ballisticComputer: true },
+        ballisticComputer: true,
+        primaryDamage: 40, primaryRange: 800, primaryHitRadius: 2,
+        primaryReload: 3, primaryClipSize: 1, primaryInterval: 0,
+        secondaryType: "grenade",
+        secondaryStart: 4, secondaryMax: 6,
+        secondaryDamage: 40, secondaryDamageMin: 15,
+        secondaryBlastRadius: 8, secondarySpeed: 20,
+        secondaryFuseRadius: 2, secondaryLife: 5,
+        secondaryFireInterval: 0.5, secondaryDamagePerUnit: 100,
+        sprintMul: 1.0, revealTime: 10 },
+      { id: "pioneer", name: "PIONEER",
+        blurb: "You&rsquo;re a fast anti-armor rusher.<br />A 25-round SMG clip and a fast rocket launcher.<br />Dump the clip, reload, and pop a rocket at the tank.<br />Sprint during reload &mdash; loud, but you re-ghost in 5s.",
+        ballisticComputer: true,
+        primaryDamage: 8, primaryRange: 300, primaryHitRadius: 2,
+        primaryReload: 1.8, primaryClipSize: 25, primaryInterval: 0.1,
+        secondaryType: "rocket",
+        secondaryStart: 2, secondaryMax: 4,
+        secondaryDamage: 50, secondaryDamageMin: 20,
+        secondaryBlastRadius: 12, secondarySpeed: 250,
+        secondaryFuseRadius: 5, secondaryLife: 5,
+        secondaryFireInterval: 1.0, secondaryDamagePerUnit: 150,
+        sprintMul: 1.125, revealTime: 5 },
     ],
   };
 
@@ -342,11 +363,14 @@ const Game = (() => {
   const hudRockets = document.getElementById("hud-rockets");
   const hudSniperRow = document.getElementById("hud-sniper-row");
   const hudSniper = document.getElementById("hud-sniper");
+  const hudSniperLabel = document.getElementById("hud-sniper-label");
   const hudGrenadesRow = document.getElementById("hud-grenades-row");
   const hudGrenades = document.getElementById("hud-grenades");
+  const hudGrenadesLabel = document.getElementById("hud-grenades-label");
   const tankHints = document.getElementById("tank-hints");
   const planeHints = document.getElementById("plane-hints");
   const riflemanHints = document.getElementById("rifleman-hints");
+  const riflemanFireHint = document.getElementById("rifleman-fire-hint");
   const stall = document.getElementById("stall");
   const spotted = document.getElementById("spotted");
   const spottedTime = document.getElementById("spotted-time");
@@ -570,6 +594,25 @@ const Game = (() => {
   let unlimitedRockets = false;
   let mgEnabled = true; // tank MG enabled (the Assault Gun loadout removes it)
   let ballisticComputer = false; // tank ballistic computer (the Assault Gun loadout)
+  // Rifleman effective weapon stats (set by applyLoadout() per loadout).
+  let primaryDamage = SNIPER_DAMAGE;
+  let primaryRange = SNIPER_RANGE;
+  let primaryHitRadius = SNIPER_HIT_RADIUS;
+  let primaryReloadTime = SNIPER_RELOAD;
+  let primaryClipSize = 1;
+  let primaryInterval = 0;
+  let secondaryType = "grenade";
+  let secondaryStart = GRENADE_START;
+  let secondaryMax = GRENADE_MAX;
+  let secondaryDamage = GRENADE_DAMAGE;
+  let secondaryDamageMin = GRENADE_DAMAGE_MIN;
+  let secondaryBlastRadius = GRENADE_BLAST_RADIUS;
+  let secondarySpeed = GRENADE_SPEED;
+  let secondaryFuseRadius = GRENADE_FUSE_RADIUS;
+  let secondaryLife = GRENADE_LIFE;
+  let secondaryFireInterval = GRENADE_FIRE_INTERVAL;
+  let secondaryDamagePerUnit = GRENADE_DAMAGE_PER_GRENADE;
+  let revealTime = PLAYER_REVEAL_TIME;
   // Plane combat state (M9). The gun heat/overheat state is shared with the
   // tank's MG (only one vehicle is active at a time).
   let rocketAmmo = ROCKET_MAX_AMMO;
@@ -578,12 +621,13 @@ const Game = (() => {
   let stallWarned = false;
   let landingHintTimer = 0;
   // Rifleman combat + stealth state (the third vehicle). The reveal timer is
-  // the "ghost" state: firing the sniper or throwing a grenade reveals the
-  // player for PLAYER_REVEAL_TIME.
-  let sniperReload = 0; // s until the sniper is ready again (0 = READY)
-  let grenadeAmmo = GRENADE_START;
-  let grenadeDamageAccum = 0; // damage banked toward the next grenade
-  let grenadeFireCooldown = 0; // s until the next throw
+  // the "ghost" state: firing any weapon reveals the player for revealTime.
+  let primaryAmmo = 1; // rounds left in the clip (1 for the sniper)
+  let primaryReload = 0; // s until the clip reloads (0 = READY)
+  let primaryCooldown = 0; // s until the next shot (SMG fire interval)
+  let secondaryAmmo = GRENADE_START;
+  let secondaryDamageAccum = 0; // damage banked toward the next secondary
+  let secondaryCooldown = 0; // s until the next secondary shot
   let playerRevealTimer = 0; // s the player is revealed (0 = a pure ghost)
   let spottedWarned = false; // latched while the SPOTTED warning is showing (beep on appear)
 
@@ -863,10 +907,12 @@ const Game = (() => {
     rocketFireCooldown = 0;
     stallWarned = false;
     landingHintTimer = 0;
-    sniperReload = 0;
-    grenadeAmmo = GRENADE_START;
-    grenadeDamageAccum = 0;
-    grenadeFireCooldown = 0;
+    primaryAmmo = primaryClipSize;
+    primaryReload = 0;
+    primaryCooldown = 0;
+    secondaryAmmo = secondaryStart;
+    secondaryDamageAccum = 0;
+    secondaryCooldown = 0;
     playerRevealTimer = 0;
     spottedWarned = false;
     kills = 0;
@@ -929,6 +975,7 @@ const Game = (() => {
     plane.group.visible = isPlane;
     rifleman.group.visible = isRifle;
     player = isPlane ? plane : isRifle ? rifleman : tank;
+    applyLoadout(); // set effective vars BEFORE spawn so resetRunState() uses them
     if (isPlane) spawnPlayerPlane();
     else if (isRifle) spawnPlayerRifleman();
     else spawnPlayerTank();
@@ -949,7 +996,6 @@ const Game = (() => {
     spotted.classList.add("hidden");
     landingHint.classList.add("hidden");
     vehicleToggle.textContent = isPlane ? "PLANE" : isRifle ? "RIFLEMAN" : "TANK";
-    applyLoadout(); // re-apply the (new) vehicle's loadout (+ title blurb)
   }
 
   /** Set the title-screen text (per loadout) and start button (per vehicle). */
@@ -1005,19 +1051,48 @@ const Game = (() => {
   rocketDamageMul = lo.rocketDamage ?? 1;
   mgEnabled = lo.mgEnabled ?? true;
   ballisticComputer = lo.ballisticComputer ?? false;
+  // Rifleman effective weapon stats (per loadout).
+  primaryDamage = lo.primaryDamage ?? SNIPER_DAMAGE;
+  primaryRange = lo.primaryRange ?? SNIPER_RANGE;
+  primaryHitRadius = lo.primaryHitRadius ?? SNIPER_HIT_RADIUS;
+  primaryReloadTime = lo.primaryReload ?? SNIPER_RELOAD;
+  primaryClipSize = lo.primaryClipSize ?? 1;
+  primaryInterval = lo.primaryInterval ?? 0;
+  secondaryType = lo.secondaryType ?? "grenade";
+  secondaryStart = lo.secondaryStart ?? GRENADE_START;
+  secondaryMax = lo.secondaryMax ?? GRENADE_MAX;
+  secondaryDamage = lo.secondaryDamage ?? GRENADE_DAMAGE;
+  secondaryDamageMin = lo.secondaryDamageMin ?? GRENADE_DAMAGE_MIN;
+  secondaryBlastRadius = lo.secondaryBlastRadius ?? GRENADE_BLAST_RADIUS;
+  secondarySpeed = lo.secondarySpeed ?? GRENADE_SPEED;
+  secondaryFuseRadius = lo.secondaryFuseRadius ?? GRENADE_FUSE_RADIUS;
+  secondaryLife = lo.secondaryLife ?? GRENADE_LIFE;
+  secondaryFireInterval = lo.secondaryFireInterval ?? GRENADE_FIRE_INTERVAL;
+  secondaryDamagePerUnit = lo.secondaryDamagePerUnit ?? GRENADE_DAMAGE_PER_GRENADE;
+  revealTime = lo.revealTime ?? PLAYER_REVEAL_TIME;
+  rifleman.sprintMul = lo.sprintMul ?? 1;
+  // HUD labels reflect the rifleman loadout's weapons.
+  if (vehicle === VEHICLE_RIFLEMAN) {
+    hudSniperLabel.textContent = primaryClipSize > 1 ? "SMG" : "SNIPER";
+    hudGrenadesLabel.textContent = secondaryType === "rocket" ? "ROCKETS" : "GRENADES";
+  }
   // HUD: the rocket row is only useful for a plane that actually has rockets.
   hudRocketsRow.classList.toggle("hidden", !(vehicle === VEHICLE_PLANE && rocketsEnabled));
   // The tank's control hints reflect the loadout.
   updateTankHints();
     // The ballistic computer reflects the loadout + the active weapon's physics
-    // (the tank's shell or the plane's rocket). The rifleman's is a hitscan
-    // mode: gravity 0, a large speed, blast/fuse radius 2 (the 2 m hit radius),
-    // and the line clamped to the sniper's max range.
+    // (the tank's shell or the plane's rocket). The rifleman's is either a
+    // hitscan line (AT SNIPER: gravity 0, clamped to the sniper's range) or
+    // an arcing rocket trajectory (PIONEER: the rocket's speed/gravity/blast).
     if (ballisticComputer) {
       if (vehicle === VEHICLE_TANK) {
         ballistic.configure(SHELL_SPEED, SHELL_GRAVITY, SHELL_LIFE, BLAST_RADIUS, SHELL_FUSE_RADIUS);
       } else if (vehicle === VEHICLE_RIFLEMAN) {
-        ballistic.configure(4000, 0, 0.2, SNIPER_HIT_RADIUS, SNIPER_HIT_RADIUS, SNIPER_RANGE);
+        if (secondaryType === "rocket") {
+          ballistic.configure(secondarySpeed, 9.8, secondaryLife, secondaryBlastRadius, secondaryFuseRadius);
+        } else {
+          ballistic.configure(4000, 0, 0.2, primaryHitRadius, primaryHitRadius, primaryRange);
+        }
       } else {
         ballistic.configure(ROCKET_SPEED, ROCKET_GRAVITY, ROCKET_LIFE, ROCKET_BLAST_RADIUS, ROCKET_FUSE_RADIUS);
       }
@@ -1028,6 +1103,7 @@ const Game = (() => {
   updateLoadoutUI();
   updateTitleOverlay(); // the top blurb is now loadout-specific
   updatePlaneHints();
+  updateRiflemanHints();
   saveSettings();
   }
 
@@ -1091,6 +1167,17 @@ const Game = (() => {
     if (lo.mgEnabled !== false) parts.push("LEFT CLICK / SPACE fire MG");
     parts.push(lo.ballisticComputer ? "RIGHT CLICK / X shell (ballistic computer)" : "RIGHT CLICK / X shell");
     tankFireHint.textContent = parts.join("  \u00B7  ");
+  }
+
+  /** Reflect the active rifleman loadout's weapons in the control hints. */
+  function updateRiflemanHints() {
+    if (vehicle !== VEHICLE_RIFLEMAN) return;
+    const lo = activeLoadout();
+    const primaryName = (lo.primaryClipSize ?? 1) > 1 ? "SMG" : "sniper";
+    const secondaryName = (lo.secondaryType ?? "grenade") === "rocket" ? "rocket" : "grenade";
+    const bc = lo.ballisticComputer ? " (ballistic computer)" : "";
+    riflemanFireHint.textContent =
+      "LEFT CLICK / SPACE " + primaryName + "  \u00B7  RIGHT CLICK / X " + secondaryName + bc;
   }
 
   // --- AI fleet (M4) ---------------------------------------------------------
@@ -1621,30 +1708,30 @@ const Game = (() => {
     }
   }
 
-  /** Bank player damage toward grenades: every GRENADE_DAMAGE_PER_GRENADE dealt
-   *  (sniper or grenade) earns one, up to the cap (the rocket banking pattern). */
-  function awardGrenadeDamage(dealt) {
-    if (grenadeAmmo >= GRENADE_MAX) return; // no banking while full
-    grenadeDamageAccum += dealt;
-    while (grenadeAmmo < GRENADE_MAX && grenadeDamageAccum >= GRENADE_DAMAGE_PER_GRENADE) {
-      grenadeDamageAccum -= GRENADE_DAMAGE_PER_GRENADE;
-      grenadeAmmo++;
+  /** Bank player damage toward the secondary (grenades or rockets): every
+    *  secondaryDamagePerUnit dealt earns one, up to the cap. */
+  function awardSecondaryDamage(dealt) {
+    if (secondaryAmmo >= secondaryMax) return;
+    secondaryDamageAccum += dealt;
+    while (secondaryAmmo < secondaryMax && secondaryDamageAccum >= secondaryDamagePerUnit) {
+      secondaryDamageAccum -= secondaryDamagePerUnit;
+      secondaryAmmo++;
     }
   }
 
-  /** Fire the hitscan sniper: an instant ray from the muzzle along the aim
-   *  (body yaw + pitch) that hits the FIRST unit whose center is within
-   *  SNIPER_HIT_RADIUS of the ray, up to SNIPER_RANGE. A miss still cracks
-   *  (and still reveals the player — the caller sets the reveal). */
-  function fireSniper() {
+  /** Fire the hitscan primary (sniper or SMG): an instant ray from the muzzle
+    *  along the aim that hits the FIRST unit whose center is within
+    *  primaryHitRadius of the ray, up to primaryRange. The damage kind is
+    *  HARD for the sniper, SOFT for the SMG. */
+  function firePrimary() {
     const muzzle = rifleman.muzzleWorld(_muzzle);
     const dir = rifleman.aimDir(_barrel);
-    _rayEnd.copy(muzzle).addScaledVector(dir, SNIPER_RANGE);
+    _rayEnd.copy(muzzle).addScaledVector(dir, primaryRange);
     const ex = _rayEnd.x - muzzle.x;
     const ey = _rayEnd.y - muzzle.y;
     const ez = _rayEnd.z - muzzle.z;
     const lenSq = ex * ex + ey * ey + ez * ez;
-    const hitSq = SNIPER_HIT_RADIUS * SNIPER_HIT_RADIUS;
+    const hitSq = primaryHitRadius * primaryHitRadius;
     let victim = null;
     let bestT = Infinity; // the first unit along the ray wins
     for (const u of ctx.units) {
@@ -1662,7 +1749,8 @@ const Game = (() => {
       }
     }
     if (victim) {
-      const dealt = victim.takeDamage(SNIPER_DAMAGE, "hard");
+      const kind = primaryClipSize === 1 ? "hard" : "soft";
+      const dealt = victim.takeDamage(primaryDamage, kind);
       if (dealt > 0) recordDamage(rifleman, victim, dealt);
       if (dealt > 0 && victim.hp <= 0) handleKill(rifleman, victim);
     }
@@ -1670,14 +1758,13 @@ const Game = (() => {
     EngineAudio.sniperShot(0);
   }
 
-  /** Reveal the player (a sniper shot or a grenade throw): start the reveal
-   *  timer, and call it out in the message feed the moment the player stops
-   *  being a ghost. */
+  /** Reveal the player (any weapon fire): start the reveal timer, and call it
+    *  out in the message feed the moment the player stops being a ghost. */
   function revealPlayer() {
     if (playerRevealTimer <= 0) {
-      addMessage("You are spotted \u2014 " + PLAYER_REVEAL_TIME + "s to get clear");
+      addMessage("You are spotted \u2014 " + Math.ceil(revealTime) + "s to get clear");
     }
-    playerRevealTimer = PLAYER_REVEAL_TIME;
+    playerRevealTimer = revealTime;
   }
 
   /** True while at least one CPU unit (tank, plane, or rifleman) is close enough
@@ -1844,7 +1931,7 @@ const Game = (() => {
     if (owner === player) {
       damageDealt += dealt;
       if (vehicle === VEHICLE_PLANE) awardRocketDamage(dealt);
-      else if (vehicle === VEHICLE_RIFLEMAN) awardGrenadeDamage(dealt);
+      else if (vehicle === VEHICLE_RIFLEMAN) awardSecondaryDamage(dealt);
     } else if (owner.team === "riflemen") {
       rifleDamage += dealt;
     } else if (owner.team === "aa") {
@@ -2461,17 +2548,20 @@ const Game = (() => {
       if (stalling && !stallWarned) EngineAudio.warnBeep();
       stallWarned = stalling;
     } else if (isRifle) {
-      // Sniper: READY, or the reload countdown (red while reloading).
-      if (sniperReload > 0) {
-        hudSniper.textContent = sniperReload.toFixed(1) + "s";
+      // Primary: clip count (SMG) or READY/reload (sniper).
+      if (primaryReload > 0) {
+        hudSniper.textContent = "RELOAD " + primaryReload.toFixed(1) + "s";
         hudSniper.classList.add("empty");
+      } else if (primaryClipSize > 1) {
+        hudSniper.textContent = primaryAmmo + "/" + primaryClipSize;
+        hudSniper.classList.toggle("empty", primaryAmmo === 0);
       } else {
         hudSniper.textContent = "READY";
         hudSniper.classList.remove("empty");
       }
-      // Grenade count (red while empty; no "∞" case for the rifleman).
-      hudGrenades.textContent = grenadeAmmo;
-      hudGrenades.classList.toggle("empty", grenadeAmmo === 0);
+      // Secondary: grenade or rocket count (red while empty).
+      hudGrenades.textContent = secondaryAmmo;
+      hudGrenades.classList.toggle("empty", secondaryAmmo === 0);
       // SPOTTED warning: the reveal timer is running (you fired / threw) AND a
       // CPU unit is close enough to actually spot you (the reveal only reaches
       // PLAYER_REVEAL_RADIUS). A beep the moment it appears, like STALL / OVERHEAT.
@@ -2895,43 +2985,50 @@ const Game = (() => {
           rifleman.hp = Math.min(rifleman.maxHp, rifleman.hp + BASE_REPAIR_RATE * dt);
         }
 
-        // Sniper: hold LMB/Space. One round in the chamber; it reloads over
-        // SNIPER_RELOAD, so holding the trigger fires again once it is ready.
+        // Primary (sniper or SMG): hold LMB/Space. The sniper fires one round
+        // then reloads; the SMG dumps a clip at primaryInterval, then reloads.
         // Firing reveals the player (the "ghost" state ends).
-        const wasReloading = sniperReload > 0;
-        sniperReload = Math.max(0, sniperReload - dt);
-        if (wasReloading && sniperReload <= 0) EngineAudio.reloadClick();
-        if (rifleman.alive && rc.firing && sniperReload <= 0) {
-          fireSniper();
-          sniperReload = SNIPER_RELOAD;
+        primaryCooldown = Math.max(0, primaryCooldown - dt);
+        if (primaryReload > 0) {
+          primaryReload -= dt;
+          if (primaryReload <= 0) {
+            primaryAmmo = primaryClipSize;
+            EngineAudio.reloadClick();
+          }
+        } else if (rifleman.alive && rc.firing && primaryAmmo > 0 && primaryCooldown <= 0) {
+          firePrimary();
+          primaryAmmo--;
+          primaryCooldown = primaryInterval;
           revealPlayer();
+          if (primaryAmmo <= 0) primaryReload = primaryReloadTime;
         }
 
-        // Grenades: hold RMB/X. Finite ammo, earned by dealing damage. The
-        // throw uses the dedicated Grenades pool (a spherical projectile, not
-        // the rocket's cylinder).
-        grenadeFireCooldown -= dt;
-        if (rifleman.alive && rc.grenadeFiring && grenadeFireCooldown <= 0 && grenadeAmmo > 0) {
-          if (
-            grenades.fire(
-              rifleman,
-              rifleman.muzzleWorld(_muzzle),
-              rifleman.aimDir(_barrel),
-              "hard",
-              GRENADE_DAMAGE,
-              GRENADE_DAMAGE_MIN
-            )
-          ) {
-            grenadeAmmo--;
-            grenadeFireCooldown = GRENADE_FIRE_INTERVAL;
+        // Secondary (grenades or rocket): hold RMB/X. Finite ammo, earned by
+        // dealing damage. Grenades use the Grenades pool; rockets use the
+        // Rockets pool with per-projectile physics (fast, flat arc).
+        secondaryCooldown = Math.max(0, secondaryCooldown - dt);
+        if (rifleman.alive && rc.grenadeFiring && secondaryCooldown <= 0 && secondaryAmmo > 0) {
+          let fired = false;
+          if (secondaryType === "grenade") {
+            fired = grenades.fire(rifleman, rifleman.muzzleWorld(_muzzle), rifleman.aimDir(_barrel), "hard", secondaryDamage, secondaryDamageMin);
+            if (fired) EngineAudio.grenadeThrow(0);
+          } else {
+            fired = rockets.fire(rifleman, rifleman.muzzleWorld(_muzzle), rifleman.aimDir(_barrel), "hard", secondaryDamage, secondaryDamageMin, {
+              speed: secondarySpeed, gravity: 9.8, life: secondaryLife,
+              blastRadius: secondaryBlastRadius, fuseRadius: secondaryFuseRadius,
+            });
+            if (fired) EngineAudio.rocketLaunch(0);
+          }
+          if (fired) {
+            secondaryAmmo--;
+            secondaryCooldown = secondaryFireInterval;
             revealPlayer();
-            EngineAudio.grenadeThrow(0);
           }
         }
         playerRevealTimer = Math.max(0, playerRevealTimer - dt);
 
-        // Ballistic computer (hitscan mode): draw the sniper's line + the
-        // impact marker, and call out an enemy in the 2 m hit radius (ZEROED).
+        // Ballistic computer: draw the trajectory (hitscan line or rocket arc)
+        // + the impact marker, and call out a zeroed enemy.
         const zeroed = ballistic.update(rifleman, terrain, ctx.units);
         zeroedHint.classList.toggle("hidden", !zeroed);
       }
