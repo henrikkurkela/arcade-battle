@@ -215,9 +215,17 @@ class Rifleman {
   _syncGroup() {
     this.group.position.copy(this.position);
     this.group.rotation.set(this.hullPitch, this.yaw, this.hullRoll, "YXZ");
-    // Tilt the rifle to the aim pitch (the player looks up/down the barrel).
-    // The CPU squad's pitch is always 0, so this is a no-op for them.
-    if (this.rifle) this.rifle.rotation.x = this.pitch;
+    // Point the rifle exactly along the aim (body yaw + aim pitch). The group
+    // already carries the terrain tilt (hullPitch/hullRoll) so the feet stay on
+    // the slope, but the barrel must NOT inherit it — otherwise the muzzle and
+    // the hitscan line (both along aimDir) drift off the barrel whenever the
+    // body is tilted, or the player turns/pitches on a slope. So cancel the
+    // terrain tilt and add the aim pitch: local X = pitch - hullPitch, local
+    // Z = -hullRoll. Order ZYX (Rz*Ry*Rx) makes the rifle's world rotation
+    // Rz(-hullRoll)*Rx(pitch-hullPitch), which composes onto the group's
+    // Ry(yaw)*Rx(hullPitch)*Rz(hullRoll) to leave a clean Ry(yaw)*Rx(pitch).
+    if (this.rifle)
+      this.rifle.rotation.set(this.pitch - this.hullPitch, 0, -this.hullRoll, "ZYX");
   }
 
   /** Swing the legs (opposite phase) with the current speed. */
