@@ -15,10 +15,10 @@ relative ease.
 
 # Arcade Battle
 
-A 3D arcade combat game. Pick a vehicle on the title screen — a tank or a
-fighter plane — and a loadout to match your style, then fight over
-procedurally generated terrain dotted with trees and rocks. The map is shared
-with a fleet of hostile CPU tanks (which
+A 3D arcade combat game. Pick a vehicle on the title screen — a tank, a
+fighter plane, or a rifleman — and a loadout to match your style, then fight
+over procedurally generated terrain dotted with trees and rocks. The map is
+shared with a fleet of hostile CPU tanks (which
 hunt you **and each other**), a squad of riflemen, a fleet of CPU planes, and
 a ring of anti-aircraft guns. Fight back with your guns, retreat to the
 garage to repair, and rack up kills.
@@ -37,11 +37,12 @@ npx serve .
 
 ## Controls
 
-The title screen has a VEHICLE toggle (TANK / PLANE), a LOADOUT toggle (picks
-the loadout for the selected vehicle — see Gameplay), and a DIFFICULTY toggle
-(see Gameplay); the start button reads "Drive" or "Fly" to match. M, P, R, H, 1/2 and Enter/Space work in both
-vehicles (mute, pause, restart, performance meter, camera mode — 1 = chase,
-2 = hatch in the tank / canopy in the plane — and start/restart).
+The title screen has a VEHICLE toggle (TANK / PLANE / RIFLEMAN), a LOADOUT
+toggle (picks the loadout for the selected vehicle — see Gameplay), and a
+DIFFICULTY toggle (see Gameplay); the start button reads "Drive", "Fly" or
+"Move" to match. M, P, R, H, 1/2 and Enter/Space work in all three vehicles
+(mute, pause, restart, performance meter, camera mode — 1 = chase / over-the-
+shoulder, 2 = hatch / canopy / scope — and start/restart).
 
 ### Tank
 
@@ -68,14 +69,26 @@ vehicles (mute, pause, restart, performance meter, camera mode — 1 = chase,
 | Left click / Space | Fire cannon (hold to spray) |
 | Right click / X | Fire rockets |
 
+### Rifleman
+
+| Key | Action |
+| --- | --- |
+| W / ↑ , S / ↓ | Walk forward / back (back at walk pace) |
+| A / ← , D / → | Turn in place |
+| Shift | Sprint |
+| Mouse (pointer locked) | Aim (body yaw + rifle pitch) |
+| Left click / Space | Fire sniper (3 s reload) |
+| Right click / X | Throw grenade |
+
 Slopes steeper than 35° stop the tank going up (it can still reverse back
-down). A short warning beep sounds when the OVERHEAT warning appears (both
-vehicles) and when the plane's STALL warning appears.
+down) and stop the rifleman climbing (he can still back down). A short
+warning beep sounds when the OVERHEAT warning appears (tank and plane) and
+when the plane's STALL warning or the rifleman's SPOTTED warning appears.
 
 ## Gameplay
 
-- **Vehicles:** the title screen's VEHICLE toggle switches between the tank
-  and the plane. Your best score is shared between the two.
+- **Vehicles:** the title screen's VEHICLE toggle switches between the tank,
+  the plane, and the rifleman. Your best score is shared between all three.
 - **Loadouts:** the title screen's LOADOUT toggle picks a loadout for the
   selected vehicle (the choice is remembered per vehicle and persists across
   reloads). Only your own unit is affected — the CPU fleet keeps its standard
@@ -89,6 +102,8 @@ vehicles) and when the plane's STALL warning appears.
      unlimited rockets at +50% damage, but heavier and slower), and
      **Dogfighter** (no rockets, the cannon overheats 2x slower, but more
      agile and faster).
+  - *Rifleman:* a single **Standard** loadout (the hitscan sniper + grenades,
+     with the ballistic computer in hitscan mode).
 - **Title screen:** the world idles behind the overlay (engine ticking over).
    Set the counts with the title-screen controls — TANKS (CPU tanks, 0–16,
    four by default; 0 = "NO TANKS"), RIFLEMEN (0–16, four by default;
@@ -107,7 +122,9 @@ vehicles) and when the plane's STALL warning appears.
   message feed of combat events, and the control hints. In the tank it also
    shows the shell status (READY or the reload countdown) and an MG heat bar;
    in the plane it shows altitude, throttle, the rocket count, and the STALL
-   warning.
+   warning; in the rifleman it shows the sniper status (READY or the reload
+   countdown), the grenade count, and the SPOTTED warning (with a beep) while
+   you are revealed.
 - **Performance meter:** **H** toggles a small meter in the bottom-right
    corner (hidden by default; the choice persists across reloads). It shows
    the frame rate, the frame time, a rough verdict on what is limiting it
@@ -138,11 +155,30 @@ vehicles) and when the plane's STALL warning appears.
   to fire rockets — arcing splash ordnance (~15 m blast, 35 HP at the center
   falling to 12 at the edge). Rockets are finite: you start with 6, and every
   100 HP of damage you deal (cannon or rocket) earns one more, up to the cap.
+- **Rifleman — the ghost:** you are a lone rifleman with 100 HP and no armor —
+  the hunter, and always the hunted. While you have not fired, you are a pure
+  ghost: no CPU unit targets you (tanks, planes, and riflemen hunt each other
+  as usual; AA guns never engage you). Firing the sniper or throwing a grenade
+  reveals you for 10 s (a SPOTTED warning with a beep and a message-feed line
+  while the timer runs): tanks and planes may then target you at their normal
+  engage ranges, and CPU riflemen within 400 m come in ("they heard the shot").
+  Independent of the reveal, any CPU rifleman within 70 m sees you (the
+  anti-camp rule — no spot is safe forever).
+- **Rifleman — sniper + grenades:** the sniper is hitscan — an instant ray
+  that hits the first unit within 2 m of the line, up to 800 m, for 40 hard
+  damage (a rifleman dies in one, a healthy tank takes four, a smoking one
+  fewer). One round in the chamber, 3 s reload (a small click when it is ready);
+  the ballistic computer draws the straight line and calls ZEROED on a target.
+  Grenades are thrown along the aim (20 m/s, arcing), detonating on ground
+  contact, proximity, or a 5 s fuse: 40 hard at the center falling to 15 over
+  an 8 m blast. You start with 4; every 100 HP of damage you deal (sniper or
+  grenade) earns one more, up to 6. A moving tank running you over is lethal.
 - **Riflemen:** foot infantry (four by default) with 40 HP and no armor. They
-   walk toward the nearest tank or plane, stop at firing range, and lay down
-   burst fire; pressed up close they turn and walk away. Tank MG fire, shell
-   splashes, and plane cannon/rockets all kill them fast — and a moving tank
-   can simply run them over.
+   walk toward the nearest tank or plane (or your rifleman — within 70 m
+   always, or within 400 m while you are revealed), stop at firing range, and
+   lay down burst fire; pressed up close they turn and walk away. Tank MG
+   fire, shell splashes, and plane cannon/rockets all kill them fast — and a
+   moving tank can simply run them over.
 - **CPU planes:** a fleet of fighters (four by default) that dogfights each
   other and the ground forces, spraying cannon and launching rare rockets.
   Shoot one down for a kill; colliding with one (or hitting the ground or
@@ -178,7 +214,8 @@ vehicles) and when the plane's STALL warning appears.
   unchanged — it only helps you. In the plane, the pad is the runway: a clean
   landing on it (wheels down, level-ish, gentle sink) restores your HP to full
   (a "LANDED — HP RESTORED" hint shows); a hard landing or a crash into the
-  ground/scenery destroys you.
+  ground/scenery destroys you. In the rifleman, walk onto the pad and your HP
+  climbs 20/s back to full (the same hint) — your safe house between hunts.
 - **Day / night:** the TIME toggle on the title screen switches between day
   and night (the sky, fog, lights, clouds, and horizon fade all ease over
   ~1 s). Night brings a dark sky with procedural stars, dim moonlight,
@@ -186,14 +223,15 @@ vehicles) and when the plane's STALL warning appears.
   persists across reloads.
 - **Score** = damage you deal (1 pt per 1 HP) + 500 per kill. Only damage and
   kills *you* cause count. The map is generated once per session. When you are
-  destroyed, a panel appears after a short delay with the reason, distance
-  driven, kills, and score, plus a scoreboard of every shooter — you and each
-  CPU callsign (tanks, planes, the riflemen, and the AA guns) — with kills and
-  score, best first. The same scoreboard is shown on the pause screen. Your
-  best score is recorded on every destruction, persisted across reloads, and
-  shown on the title screen. R (or Enter/Space) starts a new run on the same
-  map.
-- **HP:** tanks, planes, and AA guns all have 100 HP; riflemen have 40.
+  destroyed (or killed, in the rifleman), a panel appears after a short delay
+  with the reason, distance driven, kills, and score, plus a scoreboard of
+  every shooter — you and each CPU callsign (tanks, planes, the riflemen, and
+  the AA guns) — with kills and score, best first. The same scoreboard is
+  shown on the pause screen. Your best score is recorded on every destruction,
+  persisted across reloads, and shown on the title screen. R (or Enter/Space)
+  starts a new run on the same map.
+- **HP:** tanks, planes, the player rifleman, and AA guns all have 100 HP;
+  CPU riflemen have 40.
 - **Damage & armor:** every hit is classified as **soft** (small arms — the
   tank's MG, the plane's cannon, riflemen's burst fire) or **hard** (heavy
   ordnance — the main-gun shell and rockets). Each target carries two armor
@@ -202,8 +240,10 @@ vehicles) and when the plane's STALL warning appears.
   is no protection at all). Tanks are heavily armored against small arms
   (soft armor 10 — a 30-damage MG tracer gets through to just 3 HP) but only
   lightly against the main gun (hard armor 1.25 — a shell still lands ~60 at
-  the blast center, ~15 at the edge). Riflemen have no armor at all (1/1) and
-  die fast to anything. Planes are armored against cannon (soft armor 3 — a
+  the blast center, ~15 at the edge). Riflemen have no armor at all (1/1):
+  the CPU squad's 40 HP dies fast to anything, and the player rifleman's 100
+  HP still falls to a tank MG spray or a few sniper rounds. Planes are armored
+  against cannon (soft armor 3 — a
    tracer deals ~6 on normal difficulty) but not against rockets (hard armor 1). AA guns are the
   toughest (soft 10, hard 2), so they soak most hits and, when their 100 HP
   finally runs out, are only knocked out for a while before re-enabling.
@@ -227,13 +267,16 @@ vehicles) and when the plane's STALL warning appears.
     the scoreboard), the vehicle, loadout and difficulty toggles (a per-vehicle
     table of stat sets — damage/fire-rate/speed/agility multipliers, the plane's
      cannon/rocket toggles and heat rate, and the tank's turret rate, top speed,
-     traverse cone, MG toggle and ballistic computer — applied to the player
-     unit only; the difficulty swaps the AI tuning set in ai.js), the AI tank
-    fleet (respawn, kill attribution, per-shooter score tallies), the rifleman
-    squad, the CPU plane fleet, the AA-gun ring, the garage base zone (flat
-    zone, painted concrete decal with hazard border, tank repair hint, plane
-    landing), tank-tank, tank-obstacle (incl. tree felling), tank/AA-gun and
-    tank/rifleman collisions, plane crash/ram checks, the destruction-effect
+      traverse cone, MG toggle and ballistic computer — applied to the player
+      unit only; the difficulty swaps the AI tuning set in ai.js), the AI tank
+     fleet (respawn, kill attribution, per-shooter score tallies), the rifleman
+     squad, the player rifleman (spawn/reset, the reveal timer + SPOTTED
+     warning, the hitscan sniper, the grenade throws via the Rockets pool,
+     grenade ammo banking, garage repair), the CPU plane fleet, the AA-gun
+     ring, the garage base zone (flat zone, painted concrete decal with hazard
+     border, tank/rifleman repair hint, plane landing), tank-tank,
+     tank-obstacle (incl. tree felling), tank/AA-gun and tank/rifleman
+     collisions, plane crash/ram checks, the destruction-effect
     dispatch (normal debris vs. the special effects in destruction.js), dust
     puffs, damage smoke, the day/night environment blend, and the persisted
     settings (localStorage: vehicle, loadouts, difficulty,
@@ -269,33 +312,39 @@ vehicles) and when the plane's STALL warning appears.
    set by main.js) scale the roll/pitch rate (agility) and thrust (speed).
    `takeDamage()` applies soft (cannon) and hard (rocket) armor.
 - `js/rifleman.js` — the rifleman (low-poly infantry with an assault rifle):
-  a walking pace (no reverse), free in-place turning, the same terrain
-  following and slope limit as the tank, and a leg-swing walk animation.
-  `takeDamage()` applies (deliberately low) soft and hard armor.
+  a walking pace with a sprint (Shift) and a slow reverse, free in-place
+  turning, the same terrain following and slope limit as the tank, a leg-swing
+  walk animation, and a player-only aim (body yaw + rifle pitch driven by the
+  pointer-locked mouse, pitch clamped) with a head/eye anchor for the rifleman
+  camera. `takeDamage()` applies (deliberately low) soft and hard armor.
 - `js/aagun.js` — the AA-gun ring: fixed ground turrets around the map center
   that engage planes only, slew the turret with lead, fire pooled tracers and
   rare rockets, can be knocked out (disabled for a while, then re-enabled),
   and sweep a night searchlight (visual only).
 - `js/ai.js` — the controllers. `PlayerController` maps the keyboard and the
-  pointer-locked mouse to a tank control vector (W/S throttle, A/D steer,
+   pointer-locked mouse to a tank control vector (W/S throttle, A/D steer,
   Shift brake, LMB/Space fire MG, RMB/X fire shell). `PlanePlayerController`
    does the same for the plane (mouse pitch/bank, W/S pitch, A/D bank, Q/E
    rudder, Shift/Ctrl/C or mouse wheel throttle, LMB/Space cannon, RMB/X
-   rockets). `TankAI`
+   rockets). `RiflemanPlayerController` does the same for the rifleman (mouse
+   aims the body yaw + rifle pitch, W/S walk, A/D turn in place, Shift sprint,
+   LMB/Space sniper, RMB/X grenade). `TankAI`
   steers a CPU tank: nearest-enemy target selection (you, other CPUs, riflemen,
-  and planes), lead pursuit, hull steering with a slope-avoidance override, a
-  preferred engagement range, a battle-area leash (they never stray far beyond
-  ~1.2 km of the map center), turret slewing, and firing decisions (burst MG fire
-  plus a rare arced shell on a long cooldown). `RiflemanAI` drives a rifleman
-   (nearest-tank-or-plane target selection, advance to firing range, burst fire,
-   back off when pressed). `PlaneAI`
+  planes, and your rifleman only while revealed), lead pursuit, hull steering
+  with a slope-avoidance override, a preferred engagement range, a battle-area
+  leash (they never stray far beyond ~1.2 km of the map center), turret
+  slewing, and firing decisions (burst MG fire plus a rare arced shell on a
+  long cooldown). `RiflemanAI` drives a rifleman (nearest-tank-or-plane target
+  selection — plus your rifleman within 70 m always, or 400 m while revealed —
+  advance to firing range, burst fire, back off when pressed). `PlaneAI`
     steers a CPU plane (nearest-enemy pursuit, collision avoidance, terrain and
     altitude limits, a battle-area leash (they never stray far beyond the AA
-    ring), cannon spray plus a rare arced rocket). All behavior is
-   driven by named tuning constants at the top of the file; the AI's aim
-   error, engagement/fire ranges, and shot damage come from a per-difficulty
-   tuning set (EASY / NORMAL / HARD, chosen on the title screen and swapped
-   in by main.js).
+     ring), cannon spray plus a rare arced rocket). All behavior is
+    driven by named tuning constants at the top of the file (the player
+    rifleman's stealth — reveal time/radius, rifleman eyes/ears — included);
+    the AI's aim error, engagement/fire ranges, and shot damage come from a
+    per-difficulty tuning set (EASY / NORMAL / HARD, chosen on the title
+    screen and swapped in by main.js).
 - `js/combat.js` — pooled ground weapons shared by the player tank and the CPU
   tanks. `Tracers` is a fixed pool of MG tracer meshes (no per-shot
   allocation): tracers inherit the shooter's velocity, and hits apply damage
@@ -311,15 +360,19 @@ vehicles) and when the plane's STALL warning appears.
    holds the ballistic launch-direction solver the AI uses to arc shells onto a
    target.
 - `js/ballistic.js` — the player's ballistic computer (the Assault Gun tank
-  loadout and the Tank Buster plane loadout): a fire-control overlay that draws
-  the arcing ordnance's trajectory (the arc the shell/rocket would follow if
-  fired right now) and a ground marker at the impact point, both updated every
-  frame. It's weapon-agnostic — configure() sets the ordnance's physics for the
-  active weapon (the tank's shell from combat.js or the plane's rocket from
-  aircombat.js) — and reuses the real terrain, so the line always matches the
-  shot; the arc shifts as the vehicle moves (the ordnance inherits its motion).
-  It also reports whether an enemy is "zeroed" (in the blast of the impact or
-  on the arc within the proximity-fuse stand-off), which the HUD calls out.
+  loadout, the Tank Buster plane loadout, and the rifleman's hitscan mode): a
+  fire-control overlay that draws the arcing ordnance's trajectory (the arc
+  the shell/rocket would follow if fired right now) and a ground marker at the
+  impact point, both updated every frame. It's weapon-agnostic — configure()
+  sets the ordnance's physics for the active weapon (the tank's shell from
+  combat.js or the plane's rocket from aircombat.js) — and reuses the real
+  terrain, so the line always matches the shot; the arc shifts as the vehicle
+  moves (the ordnance inherits its motion). In the rifleman's hitscan mode it
+  is configured with gravity 0 and a large speed, so the arc degenerates to a
+  straight line (clamped to the sniper's 800 m range), and the proximity-fuse
+  test becomes the 2 m hitscan hit test. It also reports whether an enemy is
+  "zeroed" (in the blast of the impact or on the arc within the
+  proximity-fuse stand-off), which the HUD calls out.
 - `js/aircombat.js` — pooled aerial weapons shared by the CPU planes and the
   AA guns. `Projectiles` is a fixed pool of cannon tracers (SOFT damage) that
   inherit the shooter's velocity. `Rockets` is the pooled arcing ordnance
@@ -365,20 +418,26 @@ vehicles) and when the plane's STALL warning appears.
    behind and above the turret axis, so swinging the turret orbits the camera;
    follows with a small lead in the direction of travel, widens the FOV at
    speed, shakes on hits and destruction) and hatch (at the driver's hatch,
-   looking straight down the barrel), and the plane camera with the same two
-   modes: chase (behind and above the fuselage, the horizon banks partially
-   with the plane) and canopy (just above the canopy, looking down the nose
-   with full bank).
+    looking straight down the barrel), the plane camera with the same two
+    modes: chase (behind and above the fuselage, the horizon banks partially
+    with the plane) and canopy (just above the canopy, looking down the nose
+    with full bank), and the rifleman camera: over-the-shoulder (just behind
+    and to the side of the head, looking down the rifle, so the line and
+    crosshair read) and scope (a tight ~22° FOV from the eye, looking down the
+    barrel; a zoom only in v1 — it does not lock movement).
 - `js/audio.js` — synthesized engine audio (diesel rumble for the tank from a
   low sawtooth/triangle pair and filtered noise; a propeller "thump" and
   "whoosh" for the plane; the pitch and volume scale with throttle and speed,
   and the engine ticks over on the title screen), distance-scaled MG/cannon
-  reports, shell/rocket launch and explosion sounds, a tree thud, a deep long boom for the special destruction effects, a rifleman scream, and a warning beep for
-  the OVERHEAT and STALL warnings. Everything feeds a user-adjustable SFX gain
-  under the shared master gain (M mutes it all), with a limiter on the master
-   bus that tames the summed peaks in big battles; no audio assets, created on
-  the first user gesture. It exposes the shared AudioContext and master gain
-  so the music module can plug into the same mix.
+  reports, shell/rocket launch and explosion sounds, a sharp distance-scaled
+  sniper crack (louder and sharper up close), a grenade throw whoosh, a small
+  reload click, a tree thud, a deep long boom for the special destruction
+  effects, a rifleman scream, and a warning beep for the OVERHEAT, STALL, and
+  SPOTTED warnings. Everything feeds a user-adjustable SFX gain under the
+  shared master gain (M mutes it all), with a limiter on the master bus that
+  tames the summed peaks in big battles; no audio assets, created on the first
+  user gesture. It exposes the shared AudioContext and master gain so the
+  music module can plug into the same mix.
 - `js/music.js` — synthesized background music: three short synthwave loops
   (a calm title-screen menu track, and two combat tracks picked at random
   each run) defined as data tables and played by a lookahead note scheduler on

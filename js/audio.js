@@ -488,6 +488,104 @@ const EngineAudio = (() => {
     osc.stop(t0 + 0.55);
   }
 
+  /** One-shot sniper crack (rifleman): a very short, sharp noise burst plus a
+   *  low thump. `dist` = meters from the listener (player); close shots are
+   *  louder and sharper, distant ones duller. */
+  function sniperShot(dist = 0) {
+    if (!started) return;
+    const t0 = ctx.currentTime;
+    const vol = clamp(1.8 / (1 + dist / 140), 0.08, 1);
+    const sharp = clamp(1 - dist / 400, 0.3, 1); // near = brighter crack
+
+    // --- crack: a very short noise burst through a high falling bandpass ----
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.setValueAtTime(600 + 2400 * sharp, t0);
+    bp.frequency.exponentialRampToValueAtTime(400, t0 + 0.06);
+    bp.Q.value = 1.2;
+    const gn = ctx.createGain();
+    gn.gain.setValueAtTime(0.9 * vol, t0);
+    gn.gain.exponentialRampToValueAtTime(0.001, t0 + 0.09);
+    noise.connect(bp);
+    bp.connect(gn);
+    gn.connect(sfxGain);
+    noise.start(t0);
+    noise.stop(t0 + 0.12);
+
+    // --- thump: low sine with a fast pitch drop (the recoil) -----------------
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(160, t0);
+    osc.frequency.exponentialRampToValueAtTime(40, t0 + 0.1);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.5 * vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.14);
+    osc.connect(g);
+    g.connect(sfxGain);
+    osc.start(t0);
+    osc.stop(t0 + 0.18);
+  }
+
+  /** One-shot grenade throw (rifleman): a soft whoosh (noise through a rising
+   *  bandpass, quieter and shorter than a rocket launch) plus a low thump.
+   *  `dist` = meters from the listener (player). */
+  function grenadeThrow(dist = 0) {
+    if (!started) return;
+    const t0 = ctx.currentTime;
+    const vol = clamp(1.4 / (1 + dist / 120), 0.1, 1);
+
+    // --- whoosh: noise through a rising bandpass ----------------------------
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.setValueAtTime(600, t0);
+    bp.frequency.exponentialRampToValueAtTime(2200, t0 + 0.18);
+    bp.Q.value = 0.7;
+    const gn = ctx.createGain();
+    gn.gain.setValueAtTime(0.001, t0);
+    gn.gain.exponentialRampToValueAtTime(0.3 * vol, t0 + 0.04);
+    gn.gain.exponentialRampToValueAtTime(0.001, t0 + 0.22);
+    noise.connect(bp);
+    bp.connect(gn);
+    gn.connect(sfxGain);
+    noise.start(t0);
+    noise.stop(t0 + 0.25);
+
+    // --- thump: the arm swing ------------------------------------------------
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(120, t0);
+    osc.frequency.exponentialRampToValueAtTime(50, t0 + 0.1);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.25 * vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.12);
+    osc.connect(g);
+    g.connect(sfxGain);
+    osc.start(t0);
+    osc.stop(t0 + 0.15);
+  }
+
+  /** One-shot reload click (rifleman sniper): a small bolt clack when the
+   *  reload finishes. */
+  function reloadClick() {
+    if (!started) return;
+    const t0 = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = "square";
+    osc.frequency.value = 1400;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.001, t0);
+    g.gain.exponentialRampToValueAtTime(0.15, t0 + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.05);
+    osc.connect(g);
+    g.connect(sfxGain);
+    osc.start(t0);
+    osc.stop(t0 + 0.06);
+  }
+
   /** One-shot destruction boom (M5): a bigger version of the shell boom.
    *  `dist` = meters from the listener (player). */
   function crash(dist = 0) {
@@ -754,6 +852,9 @@ const EngineAudio = (() => {
     fire,
     rocketLaunch,
     rocketBoom,
+    sniperShot,
+    grenadeThrow,
+    reloadClick,
     treeThud,
     warnBeep,
     context,

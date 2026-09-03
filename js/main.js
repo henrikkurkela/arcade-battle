@@ -1465,6 +1465,7 @@ const Game = (() => {
     const dealt = r.takeDamage(raw);
     if (dealt > 0) recordDamage(t, r, dealt);
     if (dealt > 0 && r.hp <= 0) {
+      if (r === player) destroyReason = "You were run over.";
       const slot = rifleFleet.find((s) => s.unit === r);
       if (slot) destroyRifleman(slot, t); // the player's death is handled in the main loop
     }
@@ -1525,7 +1526,7 @@ const Game = (() => {
         drift: 0, grav: 9.8,
       });
       debris.spawnBody(rifleman.position, rifleman.velocity);
-      EngineAudio.crash(0);
+      EngineAudio.scream(0); // a body, like the CPU squad's deaths
       riflemanCam.shake = CAM_SHAKE_DESTROYED;
     } else {
       tank.alive = false;
@@ -1676,7 +1677,17 @@ const Game = (() => {
       if (dealt > 0 && victim.hp <= 0) handleKill(rifleman, victim);
     }
     flashes.flash(_muzzle);
-    EngineAudio.mgFire(0); // close-range crack; the dedicated sniper sound lands in phase 4
+    EngineAudio.sniperShot(0);
+  }
+
+  /** Reveal the player (a sniper shot or a grenade throw): start the reveal
+   *  timer, and call it out in the message feed the moment the player stops
+   *  being a ghost. */
+  function revealPlayer() {
+    if (playerRevealTimer <= 0) {
+      addMessage("You are spotted \u2014 " + PLAYER_REVEAL_TIME + "s to get clear");
+    }
+    playerRevealTimer = PLAYER_REVEAL_TIME;
   }
 
   // --- Smoke ------------------------------------------------------------------
@@ -2441,8 +2452,7 @@ const Game = (() => {
       if (stalling && !stallWarned) EngineAudio.warnBeep();
       stallWarned = stalling;
     } else if (isRifle) {
-      // Sniper: READY, or the reload countdown (red while reloading). The shot
-      // and the reload are driven in phase 3; phase 1 just shows the state.
+      // Sniper: READY, or the reload countdown (red while reloading).
       if (sniperReload > 0) {
         hudSniper.textContent = sniperReload.toFixed(1) + "s";
         hudSniper.classList.add("empty");
@@ -2854,7 +2864,6 @@ const Game = (() => {
         if (plane.alive) checkPlaneCollisions();
       } else {
         // Rifleman (the "hunter"): walk / sprint / turn / aim, sniper + grenades.
-        inGarage = false; // the garage hint is tank-only for now
         const rc = riflemanController.update(dt, rifleman, ctx);
         _prevPos.copy(rifleman.position);
         rifleman.update(dt, rc, terrain);
@@ -2862,14 +2871,27 @@ const Game = (() => {
         blockAAGun(rifleman, _prevPos, false); // blocked by AA guns, takes no damage
         focus.copy(rifleman.position);
 
+        // Garage: while the player is on the pad, repair over time (the same
+        // rate and "GARAGE — REPAIRING" hint as the tank; the pad is the
+        // rifleman's safe house).
+        inGarage =
+          rifleman.alive &&
+          rifleman.position.x > BASE.x0 && rifleman.position.x < BASE.x1 &&
+          rifleman.position.z > BASE.z0 && rifleman.position.z < BASE.z1;
+        if (inGarage && rifleman.hp < rifleman.maxHp) {
+          rifleman.hp = Math.min(rifleman.maxHp, rifleman.hp + BASE_REPAIR_RATE * dt);
+        }
+
         // Sniper: hold LMB/Space. One round in the chamber; it reloads over
         // SNIPER_RELOAD, so holding the trigger fires again once it is ready.
         // Firing reveals the player (the "ghost" state ends).
+        const wasReloading = sniperReload > 0;
         sniperReload = Math.max(0, sniperReload - dt);
+        if (wasReloading && sniperReload <= 0) EngineAudio.reloadClick();
         if (rifleman.alive && rc.firing && sniperReload <= 0) {
           fireSniper();
           sniperReload = SNIPER_RELOAD;
-          playerRevealTimer = PLAYER_REVEAL_TIME;
+          revealPlayer();
         }
 
         // Grenades: hold RMB/X. Finite ammo, earned by dealing damage. The
@@ -2894,8 +2916,8 @@ const Game = (() => {
           ) {
             grenadeAmmo--;
             grenadeFireCooldown = GRENADE_FIRE_INTERVAL;
-            playerRevealTimer = PLAYER_REVEAL_TIME;
-            EngineAudio.rocketLaunch(0); // throw whoosh; the dedicated sound lands in phase 4
+            revealPlayer();
+            EngineAudio.grenadeThrow(0);
           }
         }
         playerRevealTimer = Math.max(0, playerRevealTimer - dt);
