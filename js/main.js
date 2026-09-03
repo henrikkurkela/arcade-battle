@@ -173,6 +173,7 @@ const Game = (() => {
   const TREE_FELL_SPEED_CUT = 0.3; // fraction of speed lost plowing through
   const CAM_SHAKE_FELL = 0.15; // camera shake when the player fells a tree
   const AA_COLLIDE_RADIUS = 5; // m; the AA gun's pad radius (solid, enabled or disabled)
+  const RIFLEMAN_COLLIDE_RADIUS = 0.5; // m; a small unit can hug trees/rocks far closer
 
   // --- Vehicle selection (M9) --------------------------------------------------
   const VEHICLE_TANK = "tank";
@@ -281,7 +282,7 @@ const Game = (() => {
         primaryDamage: 8, primaryRange: 300, primaryHitRadius: 2,
         primaryReload: 1.8, primaryClipSize: 25, primaryInterval: 0.1,
         secondaryType: "rocket",
-        secondaryStart: 2, secondaryMax: 4,
+        secondaryStart: 4, secondaryMax: 4,
         secondaryDamage: 50, secondaryDamageMin: 20,
         secondaryBlastRadius: 12, secondarySpeed: 250,
         secondaryFuseRadius: 5, secondaryLife: 5,
@@ -299,6 +300,7 @@ const Game = (() => {
   // --- DOM -------------------------------------------------------------------
   const canvas = document.getElementById("game");
   const compassTape = document.getElementById("compass-tape");
+  let compassGarage = document.getElementById("compass-garage");
   const msgFeed = document.getElementById("msg-feed");
   const mutedBadge = document.getElementById("muted");
   const overlay = document.getElementById("overlay");
@@ -1966,8 +1968,8 @@ const Game = (() => {
    *  a hard impact (>= TREE_FELL_SPEED) fells any trees in the way: the tank
    *  plows through them (with a speed cut), while rocks still stop it.
    *  Riflemen are blocked but take no damage. */
-  function blockObstacle(t, prev, chip) {
-    const hit = scenery.overlapping(t.position, COLLIDE_RADIUS, _obHits);
+  function blockObstacle(t, prev, chip, radius = COLLIDE_RADIUS) {
+    const hit = scenery.overlapping(t.position, radius, _obHits);
     if (!hit.length) return;
     const impact = Math.abs(t.speed);
     // Hard impact: fell any trees in the way (rocks stay solid).
@@ -2030,13 +2032,13 @@ const Game = (() => {
    *  movement step (it stops at the gun). For tanks, a hard impact chips a
    *  little HP (per-gun cooldown); riflemen are blocked but take no damage.
    *  Ramming never damages or disables the gun — it's a physical collision. */
-  function blockAAGun(t, prev, chip) {
+  function blockAAGun(t, prev, chip, radius = COLLIDE_RADIUS) {
     if (!aaGuns) return;
     const hit = [];
     for (const g of aaGuns.guns) {
       if (
         Math.hypot(t.position.x - g.position.x, t.position.z - g.position.z) <
-        COLLIDE_RADIUS + AA_COLLIDE_RADIUS
+        radius + AA_COLLIDE_RADIUS
       ) {
         hit.push(g);
       }
@@ -2511,6 +2513,12 @@ const Game = (() => {
       frag.appendChild(tick);
     }
     compassTape.appendChild(frag);
+    const gm = document.createElement("div");
+    gm.className = "garage-marker";
+    gm.id = "compass-garage";
+    gm.style.display = "none";
+    compassTape.appendChild(gm);
+    compassGarage = gm;
   }
 
   /** M6 HUD: HP bar, speed, heading (degrees + compass point), kills, score,
@@ -2538,6 +2546,22 @@ const Game = (() => {
     const center = compassTape.parentElement.clientWidth / 2;
     compassTape.style.transform =
       "translateX(" + (center - (bearing + 360) * COMPASS_PX_PER_DEG) + "px)";
+    // Garage direction marker: bearing from player to base center.
+    // Hidden when the player is on/near the pad (bearing is meaningless at range 0).
+    {
+      const bcx = (BASE.x0 + BASE.x1) / 2;
+      const bcz = (BASE.z0 + BASE.z1) / 2;
+      const gdx = bcx - unit.position.x;
+      const gdz = bcz - unit.position.z;
+      const gDist = Math.hypot(gdx, gdz);
+      if (gDist > 60) {
+        const gBearing = ((THREE.MathUtils.radToDeg(Math.atan2(gdx, -gdz)) % 360) + 360) % 360;
+        compassGarage.style.display = "";
+        compassGarage.style.left = (gBearing + 360) * COMPASS_PX_PER_DEG + "px";
+      } else {
+        compassGarage.style.display = "none";
+      }
+    }
     hudKills.textContent = kills;
     hudScore.textContent = damageDealt + kills * KILL_SCORE;
     if (isPlane) {
@@ -2978,8 +3002,8 @@ const Game = (() => {
         const rc = riflemanController.update(dt, rifleman, ctx);
         _prevPos.copy(rifleman.position);
         rifleman.update(dt, rc, terrain);
-        blockObstacle(rifleman, _prevPos, false); // blocked by trees/rocks, takes no damage
-        blockAAGun(rifleman, _prevPos, false); // blocked by AA guns, takes no damage
+        blockObstacle(rifleman, _prevPos, false, RIFLEMAN_COLLIDE_RADIUS); // blocked by trees/rocks, takes no damage
+        blockAAGun(rifleman, _prevPos, false, RIFLEMAN_COLLIDE_RADIUS); // blocked by AA guns, takes no damage
         focus.copy(rifleman.position);
 
         // Garage: while the player is on the pad, heal over time (the same
@@ -3118,8 +3142,8 @@ const Game = (() => {
         const rc = slot.ai.update(dt, r, ctx);
         _prevPos.copy(r.position);
         r.update(dt, rc, terrain);
-        blockObstacle(r, _prevPos, false); // blocked by trees/rocks, takes no damage
-        blockAAGun(r, _prevPos, false); // blocked by AA guns, but takes no damage
+        blockObstacle(r, _prevPos, false, RIFLEMAN_COLLIDE_RADIUS); // blocked by trees/rocks, takes no damage
+        blockAAGun(r, _prevPos, false, RIFLEMAN_COLLIDE_RADIUS); // blocked by AA guns, but takes no damage
         if (!r.alive) destroyRifleman(slot, null); // died to damage this frame
         if (rc.firing && r.alive) {
           // Difficulty aim error (M1): the body still tracks the lead, but the
