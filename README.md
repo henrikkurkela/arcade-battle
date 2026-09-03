@@ -80,6 +80,9 @@ shoulder, 2 = hatch / canopy / scope — and start/restart).
 | Left click / Space | Fire sniper (3 s reload) |
 | Right click / X | Throw grenade |
 
+With the Pioneer loadout the same buttons fire the SMG (hold to spray the
+25-round clip) and launch rockets.
+
 Slopes steeper than 35° stop the tank going up (it can still reverse back
 down) and stop the rifleman climbing (he can still back down). A short
 warning beep sounds when the OVERHEAT warning appears (tank and plane) and
@@ -103,8 +106,12 @@ when the plane's STALL warning or the rifleman's SPOTTED warning appears.
      unlimited rockets at +50% damage, but heavier and slower), and
      **Dogfighter** (no rockets, the cannon overheats 2x slower, but more
      agile and faster).
-   - *Rifleman:* a single **AT Sniper** loadout (the hitscan sniper + grenades,
-      with the ballistic computer in hitscan mode).
+    - *Rifleman:* **AT Sniper** (the hitscan sniper + grenades, with the
+       ballistic computer in hitscan mode, and the stealth "ghost" — invisible
+       until you fire) and **Pioneer** (a 25-round SMG + a 4-rocket launcher,
+       the ballistic computer plots the rocket's arc; no stealth — you are
+       always visible — but a faster sprint and soft armor 2 against small
+       arms).
 - **Title screen:** the world idles behind the overlay (engine ticking over).
    Set the counts with the title-screen controls — TANKS (CPU tanks, 0–16,
    four by default; 0 = "NO TANKS"), RIFLEMEN (0–16, four by default;
@@ -123,9 +130,11 @@ when the plane's STALL warning or the rifleman's SPOTTED warning appears.
   message feed of combat events, and the control hints. In the tank it also
    shows the shell status (READY or the reload countdown) and an MG heat bar;
    in the plane it shows altitude, throttle, the rocket count, and the STALL
-   warning; in the rifleman it shows the sniper status (READY or the reload
-   countdown), the grenade count, and the SPOTTED warning (with a beep) while
-   you are revealed.
+   warning; in the rifleman it shows the primary status (READY or the reload
+   countdown) and the secondary count — the labels read SNIPER / GRENADES for
+   the AT Sniper and SMG / ROCKETS for the Pioneer — plus the SPOTTED warning
+   (with a beep) while you are revealed (AT Sniper only; the Pioneer is always
+   visible).
 - **Performance meter:** **H** toggles a small meter in the bottom-right
    corner (hidden by default; the choice persists across reloads). It shows
    the frame rate, the frame time, a rough verdict on what is limiting it
@@ -154,26 +163,35 @@ when the plane's STALL warning or the rifleman's SPOTTED warning appears.
 - **Plane — cannon + rockets:** hold **left click / Space** to spray the cannon
   (it heats and overheates just like the tank's MG). Hold **right click / X**
   to fire rockets — arcing splash ordnance (~15 m blast, 35 HP at the center
-  falling to 12 at the edge). Rockets are finite: you start with 6, and every
-  100 HP of damage you deal (cannon or rocket) earns one more, up to the cap.
-- **Rifleman — the ghost:** you are a lone rifleman with 100 HP and no armor —
-  the hunter, and always the hunted. While you have not fired, you are a pure
-  ghost: no CPU unit targets you (tanks, planes, and riflemen hunt each other
-  as usual; AA guns never engage you). Firing the sniper or throwing a grenade
-  reveals you for 10 s (a SPOTTED warning with a beep and a message-feed line
-  while the timer runs): tanks and planes may then target you (the reveal
-  reaches 400 m), and CPU riflemen within 400 m come in ("they heard the shot").
-  Independent of the reveal, any CPU rifleman within 70 m sees you (the
-  anti-camp rule — no spot is safe forever).
-- **Rifleman — sniper + grenades:** the sniper is hitscan — an instant ray
-  that hits the first unit within 2 m of the line, up to 800 m, for 40 hard
-  damage (a rifleman dies in one, a healthy tank takes four, a smoking one
-  fewer). One round in the chamber, 3 s reload (a small click when it is ready);
-  the ballistic computer draws the straight line and calls ZEROED on a target.
-  Grenades are thrown along the aim (20 m/s, arcing), detonating on ground
-  contact, proximity, or a 5 s fuse: 40 hard at the center falling to 15 over
-  an 8 m blast. You start with 4; every 100 HP of damage you deal (sniper or
-  grenade) earns one more, up to 6. A moving tank running you over is lethal.
+   falling to 12 at the edge). Rockets are finite: you carry 6, and every 100
+   HP of damage you deal (cannon or rocket) re-earns one you have spent (the
+   cap is 6).
+- **Rifleman — the ghost (AT Sniper):** with the AT Sniper loadout you are a
+   lone rifleman with 100 HP and no armor — the hunter, and always the hunted.
+   While you have not fired, you are a pure ghost: no CPU unit targets you
+   (tanks, planes, and riflemen hunt each other as usual; AA guns never engage
+   you). Firing the sniper or throwing a grenade reveals you for 10 s (a
+   SPOTTED warning with a beep and a "You are spotted — 10s to get clear"
+   message-feed line while the timer runs): tanks and planes may then target
+   you (the reveal reaches 400 m), and CPU riflemen within 400 m come in.
+   Independent of the reveal, any CPU rifleman within 70 m sees you (the
+   anti-camp rule — no spot is safe forever). The Pioneer loadout has no
+   stealth: you count as revealed at all times, so tanks and planes may target
+   you and CPU riflemen come in from the start (all at the usual 400 m).
+- **Rifleman — sniper + grenades (AT Sniper):** the sniper is hitscan — an
+   instant ray that hits the first unit within 2 m of the line, up to 800 m,
+   for 40 hard damage (a rifleman dies in one, a healthy tank takes four, a
+   smoking one two). One round in the chamber, 3 s reload (a small click when
+   it is ready); the ballistic computer draws the straight line and calls
+   ZEROED on a target. Grenades are thrown along the aim (20 m/s, arcing),
+   detonating on ground contact, proximity, or a 5 s fuse: 40 hard at the
+   center falling to 15 over an 8 m blast. You carry 4; every 100 HP of damage
+   you deal (sniper or grenade) re-earns one you have spent (the cap is 6).
+   The Pioneer's SMG is a 25-round hitscan clip (8 soft damage per round,
+   300 m, 1.8 s reload between clips) and its launcher throws 4 arcing rockets
+   (50 hard at the center falling to 20 over a 12 m blast, re-earned 1 per 150
+   HP of damage). A moving tank running you over deals speed-based damage (10
+   + 2 per m/s): enough to one-shot a 40 HP rifleman, a heavy hit for your 100.
 - **Riflemen:** foot infantry (four by default) with 40 HP and no armor. They
    walk toward the nearest tank or plane (or your rifleman — within 70 m
    always, or within 400 m while you are revealed), stop at firing range, and
@@ -243,8 +261,10 @@ when the plane's STALL warning or the rifleman's SPOTTED warning appears.
   (soft armor 10 — a 30-damage MG tracer gets through to just 3 HP) but only
   lightly against the main gun (hard armor 1.25 — a shell still lands ~60 at
   the blast center, ~15 at the edge). Riflemen have no armor at all (1/1):
-  the CPU squad's 40 HP dies fast to anything, and the player rifleman's 100
-  HP still falls to a tank MG spray or a few sniper rounds. Planes are armored
+   the CPU squad's 40 HP dies fast to anything, and the player rifleman's 100
+   HP still falls to a tank MG spray or a few sniper rounds (the Pioneer
+   loadout is the exception: its soft armor 2 halves small-arms damage).
+   Planes are armored
   against cannon (soft armor 3 — a
    tracer deals ~6 on normal difficulty) but not against rockets (hard armor 1). AA guns are the
   toughest (soft 10, hard 2), so they soak most hits and, when their 100 HP
@@ -362,17 +382,19 @@ when the plane's STALL warning or the rifleman's SPOTTED warning appears.
    holds the ballistic launch-direction solver the AI uses to arc shells onto a
    target.
 - `js/ballistic.js` — the player's ballistic computer (the Assault Gun tank
-  loadout, the Tank Buster plane loadout, and the rifleman's hitscan mode): a
+   loadout, the Tank Buster plane loadout, and the rifleman loadouts — the AT
+   Sniper's hitscan line, the Pioneer's rocket arc): a
   fire-control overlay that draws the arcing ordnance's trajectory (the arc
   the shell/rocket would follow if fired right now) and a ground marker at the
   impact point, both updated every frame. It's weapon-agnostic — configure()
   sets the ordnance's physics for the active weapon (the tank's shell from
   combat.js or the plane's rocket from aircombat.js) — and reuses the real
   terrain, so the line always matches the shot; the arc shifts as the vehicle
-  moves (the ordnance inherits its motion). In the rifleman's hitscan mode it
-  is configured with gravity 0 and a large speed, so the arc degenerates to a
-  straight line (clamped to the sniper's 800 m range), and the proximity-fuse
-  test becomes the 2 m hitscan hit test. It also reports whether an enemy is
+  moves (the ordnance inherits its motion). In the AT Sniper it is configured
+  with gravity 0 and a large speed, so the arc degenerates to a straight line
+  (clamped to the sniper's 800 m range), and the proximity-fuse test becomes
+  the 2 m hitscan hit test; the Pioneer configures it with the rocket's
+  physics instead (an arcing trajectory). It also reports whether an enemy is
   "zeroed" (in the blast of the impact or on the arc within the
   proximity-fuse stand-off), which the HUD calls out.
 - `js/aircombat.js` — pooled aerial weapons shared by the CPU planes and the
