@@ -233,30 +233,37 @@ const Game = (() => {
   const ASSAULT_GUN_CONE_DEG = 20; // assault gun: max turret swing off the hull nose
   const LOADOUTS = {
     tank: [
-      { id: "standard", name: "STANDARD", desc: "Balanced gun and tracks.",
+      { id: "standard", name: "STANDARD",
+        blurb: "You&rsquo;re a lone tank in a free-for-all.<br />Balanced gun and tracks &mdash; arc your shells, gun down the fleet,<br />and retreat to the garage to repair.",
         turretRate: 1.0, mgDamage: 1.0, mgRate: 1.0, shellDamage: 1.0, topSpeed: 1.0 },
-      { id: "assault", name: "ASSAULT GUN", desc: "No MG; a ballistic computer shows your shell's arc and calls ZEROED on a target. +30% shell damage.",
+      { id: "assault", name: "ASSAULT GUN",
+        blurb: "You&rsquo;re a lone assault gun &mdash; heavy, slow, deliberate.<br />No MG; a ballistic computer plots your shell&rsquo;s arc and calls ZEROED.<br />Big shells, +30% damage. Take your aim.",
         turretRate: 0.5, mgEnabled: false, shellDamage: 1.3, topSpeed: 1.0,
         ballisticComputer: true,
         turretCone: THREE.MathUtils.degToRad(ASSAULT_GUN_CONE_DEG) },
-      { id: "light", name: "LIGHT TANK", desc: "Fast MG, tracks, and turret; -30% shell damage.",
+      { id: "light", name: "LIGHT TANK",
+        blurb: "You&rsquo;re a lone light tank &mdash; quick on the tracks.<br />Fast MG and turret, but -30% shell damage.<br />Dart in, fire, and be gone before they can answer.",
         turretRate: 1.3, mgDamage: 1.0, mgRate: 1.3, shellDamage: 0.7, topSpeed: 1.3 },
     ],
     plane: [
-      { id: "standard", name: "STANDARD", desc: "Cannon and rockets.",
+      { id: "standard", name: "STANDARD",
+        blurb: "You&rsquo;re a lone fighter over hostile territory.<br />Cannon and rockets &mdash; dogfight the fleet, dodge the AA ring,<br />hold your speed. Land on the pad to restore your HP.",
         cannon: true, rockets: true, unlimitedRockets: false, heatPerShot: 1.0,
         agility: 1.0, speed: 1.0 },
-      { id: "tankbuster", name: "TANK BUSTER", desc: "No cannon — a ballistic computer shows your rocket's arc and calls ZEROED on a target. Unlimited rockets at +50% damage; heavier and slower.",
+      { id: "tankbuster", name: "TANK BUSTER",
+        blurb: "You&rsquo;re a lone tank buster &mdash; heavy, slow, and lethal.<br />No cannon; a ballistic computer plots your rocket&rsquo;s arc and calls ZEROED.<br />Unlimited rockets at +50% damage. Pick your shots.",
         cannon: false, rockets: true, unlimitedRockets: true, heatPerShot: 1.0,
         rocketDamage: 1.5,
         ballisticComputer: true,
         agility: 0.9, speed: 0.9 },
-      { id: "dogfighter", name: "DOGFIGHTER", desc: "No rockets, cannon overheats 2x slower; more agile and faster.",
+      { id: "dogfighter", name: "DOGFIGHTER",
+        blurb: "You&rsquo;re a lone dogfighter &mdash; fast and nimble.<br />No rockets, but the cannon overheats 2x slower.<br />More agile, more speed. Stay in the fight.",
         cannon: true, rockets: false, unlimitedRockets: false, heatPerShot: 0.5,
         agility: 1.1, speed: 1.1 },
     ],
     rifleman: [
-      { id: "atsniper", name: "AT SNIPER", desc: "A hitscan sniper and a handful of grenades. Stay on your toes.",
+      { id: "atsniper", name: "AT SNIPER",
+        blurb: "You&rsquo;re a lone rifleman &mdash; the hunter, and always the hunted.<br />A hitscan sniper and a handful of grenades. Stay on your toes:<br />invisible until you fire, then hunted for 10s.",
         ballisticComputer: true },
     ],
   };
@@ -322,7 +329,6 @@ const Game = (() => {
   const vehicleToggle = document.getElementById("vehicle-toggle");
   const loadoutControl = document.getElementById("loadout-control");
   const loadoutToggle = document.getElementById("loadout-toggle");
-  const loadoutDesc = document.getElementById("loadout-desc");
   const difficultyControl = document.getElementById("difficulty-control");
   const difficultyToggle = document.getElementById("difficulty-toggle");
   const planeWeaponsHint = document.getElementById("plane-weapons-hint");
@@ -943,31 +949,14 @@ const Game = (() => {
     spotted.classList.add("hidden");
     landingHint.classList.add("hidden");
     vehicleToggle.textContent = isPlane ? "PLANE" : isRifle ? "RIFLEMAN" : "TANK";
-    updateTitleOverlay();
-    applyLoadout(); // re-apply the (new) vehicle's loadout
+    applyLoadout(); // re-apply the (new) vehicle's loadout (+ title blurb)
   }
 
-  /** Set the title-screen text and start button for the selected vehicle. */
+  /** Set the title-screen text (per loadout) and start button (per vehicle). */
   function updateTitleOverlay() {
-    let blurb, btn;
-    if (vehicle === VEHICLE_PLANE) {
-      blurb =
-        "You&rsquo;re a lone fighter over hostile territory.<br />" +
-        "Dogfight the enemy fleet, dodge the AA ring, hold your speed.<br />" +
-        "Land on the garage pad to restore your HP.";
-      btn = "Fly";
-    } else if (vehicle === VEHICLE_RIFLEMAN) {
-      blurb =
-        "You&rsquo;re a lone rifleman &mdash; the hunter, and always the hunted.<br />" +
-        "Stay on your toes: you&rsquo;re invisible until you fire, then hunted for 10s.<br />" +
-        "Let the CPUs fight each other, and harvest the wounded.";
-      btn = "Move";
-    } else {
-      blurb =
-        "You&rsquo;re a lone tank in a free-for-all.<br />" +
-        "Gun down the enemy fleet, arc your shells, retreat to the garage to repair.";
-      btn = "Drive";
-    }
+    const btn =
+      vehicle === VEHICLE_PLANE ? "Fly" : vehicle === VEHICLE_RIFLEMAN ? "Move" : "Drive";
+    const blurb = activeLoadout().blurb;
     overlayText.innerHTML =
       blurb + (bestScore > 0 ? "<br /><br />BEST SCORE: " + bestScore : "");
     overlayBtn.textContent = btn;
@@ -1037,6 +1026,7 @@ const Game = (() => {
       ballistic.setEnabled(false);
     }
   updateLoadoutUI();
+  updateTitleOverlay(); // the top blurb is now loadout-specific
   updatePlaneHints();
   saveSettings();
   }
@@ -1052,11 +1042,10 @@ const Game = (() => {
     applyLoadout();
   }
 
-  /** Sync the loadout button label + description to the active loadout. */
+  /** Sync the loadout button label to the active loadout. */
   function updateLoadoutUI() {
     const lo = activeLoadout();
     loadoutToggle.textContent = lo.name;
-    loadoutDesc.textContent = lo.desc;
   }
 
   /** Cycle the difficulty to the next tier (title screen). */
@@ -2221,7 +2210,6 @@ const Game = (() => {
     // The count controls are only useful before a run (ready/destroyed).
     vehicleControl.classList.toggle("hidden", state === "paused");
     loadoutControl.classList.toggle("hidden", state === "paused");
-    loadoutDesc.classList.toggle("hidden", state === "paused");
     cpuControl.classList.toggle("hidden", state === "paused");
     rifleControl.classList.toggle("hidden", state === "paused");
     planeControl.classList.toggle("hidden", state === "paused");

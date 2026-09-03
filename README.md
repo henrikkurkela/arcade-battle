@@ -92,7 +92,8 @@ when the plane's STALL warning or the rifleman's SPOTTED warning appears.
 - **Loadouts:** the title screen's LOADOUT toggle picks a loadout for the
   selected vehicle (the choice is remembered per vehicle and persists across
   reloads). Only your own unit is affected — the CPU fleet keeps its standard
-  stats.
+  stats. Each loadout also sets the title-screen blurb (the descriptive
+  paragraph under the title) to match.
   - *Tank:* **Standard** (balanced), **Assault Gun** (no MG — a ballistic
     computer draws your shell's arc and calls ZEROED on a target; a slow,
     limited-traverse turret with +30% shell damage, so you aim by steering),

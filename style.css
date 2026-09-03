@@ -645,11 +645,6 @@ canvas {
   transform: scale(0.95);
 }
 
-#loadout-control {
-  gap: 12px;
-  margin-bottom: 4px; /* the description caption sits just below the row */
-}
-
 #loadout-control button {
   min-width: 150px;
   height: 34px;
@@ -692,15 +687,6 @@ canvas {
 
 #difficulty-control button:active {
   transform: scale(0.95);
-}
-
-#loadout-desc {
-  margin-bottom: 12px;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 1px;
-  opacity: 0.55;
-  text-transform: none;
 }
 
 #cpu-count,
