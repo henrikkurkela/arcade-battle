@@ -1856,12 +1856,13 @@ const Game = (() => {
     }
   }
 
-  /** Tank vs obstacle: if the tank's new position overlaps a tree/rock,
-   *  cancel the movement step (the tank stops at the obstacle) and chip a
-   *  little HP on a hard impact (per-obstacle cooldown). A hard impact
-   *  (>= TREE_FELL_SPEED) fells any trees in the way: the tank plows
-   *  through them (with a speed cut), while rocks still stop it. */
-  function blockObstacle(t, prev) {
+  /** Tank/rifleman vs obstacle: if the unit's new position overlaps a
+   *  tree/rock, cancel the movement step (the unit stops at the obstacle).
+   *  For tanks, a hard impact chips a little HP (per-obstacle cooldown) and
+   *  a hard impact (>= TREE_FELL_SPEED) fells any trees in the way: the tank
+   *  plows through them (with a speed cut), while rocks still stop it.
+   *  Riflemen are blocked but take no damage. */
+  function blockObstacle(t, prev, chip) {
     const hit = scenery.overlapping(t.position, COLLIDE_RADIUS, _obHits);
     if (!hit.length) return;
     const impact = Math.abs(t.speed);
@@ -1900,7 +1901,7 @@ const Game = (() => {
       t.speed = 0;
     }
     t.group.position.copy(t.position);
-    if (impact <= OBSTACLE_SPEED_MIN) return;
+    if (!chip || impact <= OBSTACLE_SPEED_MIN) return;
     t._obCd = t._obCd || new Map();
     let canChip = false;
     for (const item of hit) {
@@ -2769,7 +2770,7 @@ const Game = (() => {
         const control = playerController.update(dt, tank, ctx);
         _prevPos.copy(tank.position);
         tank.update(dt, control, terrain);
-        blockObstacle(tank, _prevPos);
+        blockObstacle(tank, _prevPos, true);
         blockAAGun(tank, _prevPos, true);
         emitDamageSmoke(tank, dt);
         emitDust(tank, dt, control.steer);
@@ -2867,7 +2868,7 @@ const Game = (() => {
         const rc = riflemanController.update(dt, rifleman, ctx);
         _prevPos.copy(rifleman.position);
         rifleman.update(dt, rc, terrain);
-        blockObstacle(rifleman, _prevPos);
+        blockObstacle(rifleman, _prevPos, false); // blocked by trees/rocks, takes no damage
         blockAAGun(rifleman, _prevPos, false); // blocked by AA guns, takes no damage
         focus.copy(rifleman.position);
 
@@ -2940,7 +2941,7 @@ const Game = (() => {
         const ac = slot.ai.update(dt, cp, ctx);
         _prevPos.copy(cp.position);
         cp.update(dt, ac, terrain);
-        blockObstacle(cp, _prevPos);
+        blockObstacle(cp, _prevPos, true);
         blockAAGun(cp, _prevPos, true);
         if (!cp.alive) {
           // Died to obstacle/AA-gun chip damage: dispatch the destroy handler
@@ -3005,9 +3006,9 @@ const Game = (() => {
         const rc = slot.ai.update(dt, r, ctx);
         _prevPos.copy(r.position);
         r.update(dt, rc, terrain);
-        blockObstacle(r, _prevPos);
+        blockObstacle(r, _prevPos, false); // blocked by trees/rocks, takes no damage
         blockAAGun(r, _prevPos, false); // blocked by AA guns, but takes no damage
-        if (!r.alive) destroyRifleman(slot, null); // e.g. died to obstacle chip damage
+        if (!r.alive) destroyRifleman(slot, null); // died to damage this frame
         if (rc.firing && r.alive) {
           // Difficulty aim error (M1): the body still tracks the lead, but the
           // tracer sprays by a random angle that grows with range.
