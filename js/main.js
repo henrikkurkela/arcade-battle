@@ -2895,8 +2895,8 @@ const Game = (() => {
         blockAAGun(rifleman, _prevPos, false); // blocked by AA guns, takes no damage
         focus.copy(rifleman.position);
 
-        // Garage: while the player is on the pad, repair over time (the same
-        // rate and "GARAGE — REPAIRING" hint as the tank; the pad is the
+        // Garage: while the player is on the pad, heal over time (the same
+        // rate as the tank, with a "GARAGE — HEALING" hint; the pad is the
         // rifleman's safe house).
         inGarage =
           rifleman.alive &&
@@ -3301,8 +3301,14 @@ const Game = (() => {
     perf.phase.fx += performance.now() - _t; _t = performance.now();
     updateHud();
     updateCrosshair();
-    // Garage hint: visible while the player tank is inside the pad (M5).
-    garageHint.classList.toggle("hidden", !(state === "playing" && inGarage));
+    // Garage hint: visible while the player is inside the pad (M5). The
+    // tank is "repairing"; the rifleman is "healing".
+    const showGarage = state === "playing" && inGarage;
+    garageHint.classList.toggle("hidden", !showGarage);
+    if (showGarage) {
+      garageHint.textContent =
+        vehicle === VEHICLE_RIFLEMAN ? "GARAGE \u2014 HEALING" : "GARAGE \u2014 REPAIRING";
+    }
     // Landing hint: visible briefly after a clean plane touchdown (M9).
     // Always reconcile with the timer (a run reset zeroes it without hiding).
     landingHintTimer = Math.max(0, landingHintTimer - dt);
